@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "_doc": "Tunable routing model. Override any key in roles.local.json (deep-merged, gitignored). Quality is in AA-intelligence-index points: every metric is quantile-mapped onto that scale. Metrics not present in benchmarks.json are skipped (mirror = intelligence index only; free API adds coding/agentic indices; Pro adds per-eval scores). Token profiles and $ values are first guesses; refine from outcomes.jsonl via scripts/calibrate.ts.",
+  "defaults": {
+    "floors": { "R0": 24, "R1": 40, "R2": 50, "R3": 57 },
+    "max_ttft_s": { "R0": 30, "R1": 60, "R2": 90, "R3": 150 },
+    "p_pass_at_floor": 0.75,
+    "logistic_scale": 4,
+    "verbosity_exponent": 1,
+    "turn_latency_factor": 0.5,
+    "cache_hit_price_ratio": 0.1,
+    "min_metric_coverage": 15,
+    "background_latency_factor": 0.1,
+    "failure_cost_by_verifiability": { "strict": 0.5, "moderate": 1, "subjective": 1.5 },
+    "floor_adjustments": { "strict_single_file": -1, "subjective": 1 }
+  },
+  "quota_cost_multipliers": { "surplus": 0.1, "normal": 1, "scarce": 4 },
+  "category_roles": {
+    "research": "scout",
+    "log_triage": "scout",
+    "doc_summary": "scout",
+    "test_gen": "implement",
+    "mechanical_refactor": "implement",
+    "bugfix": "implement",
+    "feature_slice": "implement",
+    "debugging": "debug",
+    "architecture": "design",
+    "primary_review": "review",
+    "second_opinion_review": "review"
+  },
+  "roles": {
+    "scout": {
+      "description": "Read-only search, log triage, summaries. Input-heavy, short answers; quality above the floor buys little.",
+      "metrics": {
+        "aa_lcr": 3,
+        "ifbench": 2,
+        "artificial_analysis_agentic_index": 2,
+        "artificial_analysis_intelligence_index": 1
+      },
+      "tokens": { "input": 150000, "cache_hit_share": 0.7, "output": 3000, "turns": 10 },
+      "value_per_minute_usd": 0.1,
+      "failure_cost_usd": { "R0": 0.3, "R1": 0.6, "R2": 1.2, "R3": 2.5 }
+    },
+    "implement": {
+      "description": "Bugfix, feature slice, tests, mechanical refactor with an acceptance gate.",
+      "metrics": {
+        "terminalbench_hard": 3,
+        "scicode": 1,
+        "artificial_analysis_coding_index": 3,
+        "artificial_analysis_agentic_index": 2,
+        "artificial_analysis_intelligence_index": 1
+      },
+      "tokens": { "input": 400000, "cache_hit_share": 0.85, "output": 15000, "turns": 25 },
+      "value_per_minute_usd": 0.05,
+      "failure_cost_usd": { "R0": 1, "R1": 2.5, "R2": 6, "R3": 12 }
+    },
+    "debug": {
+      "description": "Stateful/multi-module debugging, unknown root cause.",
+      "metrics": {
+        "terminalbench_hard": 3,
+        "artificial_analysis_coding_index": 2,
+        "artificial_analysis_agentic_index": 2,
+        "aa_lcr": 1,
+        "artificial_analysis_intelligence_index": 2
+      },
+      "tokens": { "input": 600000, "cache_hit_share": 0.85, "output": 25000, "turns": 35 },
+      "value_per_minute_usd": 0.05,
+      "failure_cost_usd": { "R0": 1.5, "R1": 4, "R2": 8, "R3": 16 }
+    },
+    "design": {
+      "description": "Architecture and tradeoff analysis; reasoning-heavy, little tool use.",
+      "metrics": {
+        "artificial_analysis_intelligence_index": 3,
+        "gpqa_diamond": 1,
+        "hle": 1,
+        "artificial_analysis_coding_index": 1
+      },
+      "tokens": { "input": 150000, "cache_hit_share": 0.6, "output": 20000, "turns": 8 },
+      "value_per_minute_usd": 0.03,
+      "failure_cost_usd": { "R0": 2, "R1": 5, "R2": 10, "R3": 20 }
+    },
+    "review": {
+      "description": "Diff review. A miss is expensive; prefer a different family than the author.",
+      "metrics": {
+        "artificial_analysis_coding_index": 3,
+        "scicode": 1,
+        "ifbench": 1,
+        "aa_lcr": 1,
+        "artificial_analysis_intelligence_index": 1
+      },
+      "tokens": { "input": 120000, "cache_hit_share": 0.5, "output": 6000, "turns": 6 },
+      "value_per_minute_usd": 0.05,
+      "failure_cost_usd": { "R0": 1, "R1": 3, "R2": 8, "R3": 15 },
+      "cross_family": true
+    }
+  }
+}

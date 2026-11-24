@@ -1,47 +1,44 @@
+/**
+ * Sync Artificial Analysis data into benchmarks.json and derive frontier.json.
+ *
+ * frontier.json is pure data: every matched (provider, model, effort) with AA prices, latency,
+ * AA-suite output tokens and all metrics quantile-mapped onto the intelligence-index scale.
+ * Overrides, quota and role tunables are applied at route time (scripts/route.ts), so editing
+ * them never requires a resync.
+ *
+ * Sources (auto): official AA API v2 when ARTIFICIAL_ANALYSIS_API_KEY is set (Pro endpoint,
+ * falling back to the free endpoint), else the zero-key daily mirror (intelligence index only).
+ */
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PATHS, loadOverrides, loadQuota, loadRoles } from "./config.ts";
+import { aaOutputTokens, buildQuantileMapper, collectMetricNames, median } from "./model.ts";
+import { renderTable } from "./route.ts";
 import {
+  BASE_METRIC,
   EFFORT_LEVELS,
-  RUNGS,
-  RUNG_ORDER,
   isEffortLevel,
   isFiniteNumber,
   isNonEmptyString,
   isRecord,
-  parseAASnapshot,
+  parseAAModelRecord,
   type AAModelRecord,
-  type AASnapshot,
+  type AATokenCounts,
+  type BenchmarkSource,
   type CachedBenchmarksFile,
   type CatalogModelSpec,
   type EffortLevel,
-  type EntryOverride,
   type FrontierEntry,
   type FrontierFile,
-  type OverridesFile,
   type ProviderFamily,
   type ProviderOptions,
-  type Rung,
-  type RungConstraint,
-  type RungThreshold,
 } from "./types.ts";
 
 const MIRROR_URL =
   "https://raw.githubusercontent.com/terryds/bestvaluemodel/main/data/models.json";
-const AA_API_URL = "https://artificialanalysis.ai/api/v2/language/models/free";
-
-const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const BENCHMARKS_PATH = resolve(ROOT_DIR, "benchmarks.json");
-const FRONTIER_PATH = resolve(ROOT_DIR, "frontier.json");
-const OVERRIDES_PATH = resolve(ROOT_DIR, "overrides.json");
-const LOCAL_OVERRIDES_PATH = resolve(ROOT_DIR, "overrides.local.json");
-
-const DEFAULT_RUNG_THRESHOLDS: Readonly<Record<Rung, RungThreshold>> = {
-  R0: { min_index: 24, max_index_exclusive: 40, max_ttft_s: 30 },
-  R1: { min_index: 40, max_index_exclusive: 50, max_ttft_s: 45 },
-  R2: { min_index: 50, max_index_exclusive: 58, max_ttft_s: 65 },
-  R3: { min_index: 58, max_index_exclusive: null, max_ttft_s: 150 },
-};
+const AA_API_BASE = "https://artificialanalysis.ai/api/v2/language/models";
+const ATTRIBUTION = "Data from Artificial Analysis (https://artificialanalysis.ai/). Attribution required.";
 
 const EFFORT_OPTION_KEYS = ["effort", "thought_level", "reasoning_effort"] as const;
 
@@ -95,7 +92,7 @@ interface MappedCandidate {
   readonly effort: EffortLevel;
   readonly options: ProviderOptions;
   readonly record: AAModelRecord;
-  readonly source: "artificial_analysis_mirror" | "artificial_analysis_api";
+  readonly source: BenchmarkSource;
 }
 
 interface CliArgs {
@@ -234,8 +231,9 @@ Options:
   --refresh               Force fetching fresh full AA snapshot into benchmarks.json
   --offline               Never hit the network; recompute from cached benchmarks.json only
   --source=mirror         Force zero-key daily Artificial Analysis mirror
-  --source=api            Force official AA API v2 (requires ARTIFICIAL_ANALYSIS_API_KEY)
-  --dry-run               Print computed frontier without writing frontier.json
+  --source=api            Force official AA API v2 (requires ARTIFICIAL_ANALYSIS_API_KEY;
+                          Pro endpoint first, free endpoint on 401/403)
+  --dry-run               Print computed frontier without writing files
   --check-models a,b,c    Exit 2 if any model ID is uncalibrated in frontier.json (no network)
 `);
       process.exit(0);
@@ -336,7 +334,7 @@ async function parseCapabilitiesFile(pathArg: string): Promise<readonly CatalogM
 function matchSpecToAARecords(
   spec: CatalogModelSpec,
   models: readonly AAModelRecord[],
-  source: "artificial_analysis_mirror" | "artificial_analysis_api",
+  source: BenchmarkSource,
 ): readonly MappedCandidate[] {
   const baseSlug = normalizeModelToAASlug(spec.model);
   const matched: MappedCandidate[] = [];
@@ -349,8 +347,9 @@ function matchSpecToAARecords(
     if (slug === baseSlug) {
       const parenMatch = /\((low|medium|high|xhigh|max)\b/i.exec(record.name);
       const parsed = parenMatch?.[1]?.toLowerCase();
-      if (parsed && isEffortLevel(parsed) && spec.allowed_efforts.includes(parsed)) {
-        effort = parsed;
+      if (parsed && isEffortLevel(parsed)) {
+        // An effort the provider does not expose (e.g. Max) is not that provider's top effort.
+        effort = spec.allowed_efforts.includes(parsed) ? parsed : null;
       } else {
         effort =
           spec.allowed_efforts[spec.allowed_efforts.length - 1] ?? "high";
@@ -387,95 +386,194 @@ function matchSpecToAARecords(
   );
 }
 
-function normalizeAAApiPayload(raw: unknown): AASnapshot {
-  if (!isRecord(raw) || !Array.isArray(raw["data"])) {
-    throw new Error("Unexpected Artificial Analysis API v2 response shape.");
-  }
-  const models: AAModelRecord[] = [];
-  for (const item of raw["data"]) {
-    if (!isRecord(item)) continue;
-    const evals = isRecord(item["evaluations"]) ? item["evaluations"] : {};
-    const pricing = isRecord(item["pricing"]) ? item["pricing"] : {};
-    const perf = isRecord(item["performance_v3"]) ? item["performance_v3"] : {};
-    const creatorObj = isRecord(item["model_creator"]) ? item["model_creator"] : {};
 
-    const idx = evals["artificial_analysis_intelligence_index"];
-    const inputPrice = pricing["price_1m_input_tokens"];
-    const outputPrice = pricing["price_1m_output_tokens"];
-    const blendedPrice =
-      pricing["price_1m_blended_3_to_1"] ??
-      (isFiniteNumber(inputPrice) && isFiniteNumber(outputPrice)
-        ? (3 * inputPrice + outputPrice) / 4
-        : undefined);
-    const taskCost = pricing["cost_per_task_usd"] ?? blendedPrice;
-    const tps =
-      perf["mean_output_tokens_per_second"] ??
-      item["median_output_tokens_per_second"] ??
-      0;
-    const ttft =
-      perf["median_time_to_first_answer_token"] ??
-      item["median_time_to_first_token_seconds"] ??
-      0;
+// ---------------------------------------------------------------------------
+// AA API v2 normalization
+// ---------------------------------------------------------------------------
 
-    if (
-      isNonEmptyString(item["id"]) &&
-      isNonEmptyString(item["name"]) &&
-      isNonEmptyString(item["slug"]) &&
-      isFiniteNumber(idx) &&
-      isFiniteNumber(inputPrice) &&
-      isFiniteNumber(outputPrice) &&
-      isFiniteNumber(blendedPrice) &&
-      isFiniteNumber(taskCost) &&
-      isFiniteNumber(tps) &&
-      isFiniteNumber(ttft)
-    ) {
-      models.push({
-        id: item["id"],
-        name: item["name"],
-        slug: item["slug"],
-        creator: isNonEmptyString(creatorObj["name"]) ? creatorObj["name"] : "Unknown",
-        index: idx,
-        blended: blendedPrice,
-        input: inputPrice,
-        output: outputPrice,
-        task: taskCost,
-        tps,
-        ttft,
-      });
-    }
+function num(obj: unknown, ...path: string[]): number | undefined {
+  let cur: unknown = obj;
+  for (const key of path) {
+    if (!isRecord(cur)) return undefined;
+    cur = cur[key];
   }
-  if (models.length === 0) {
-    throw new Error("Artificial Analysis API v2 returned zero usable models.");
+  return isFiniteNumber(cur) ? cur : undefined;
+}
+
+export function normalizeAAApiModel(item: unknown): AAModelRecord | null {
+  if (!isRecord(item)) return null;
+  const evalsRaw = isRecord(item["evaluations"]) ? item["evaluations"] : {};
+  const evals: Record<string, number> = {};
+  for (const [k, v] of Object.entries(evalsRaw)) {
+    if (isFiniteNumber(v)) evals[k] = v;
+  }
+  const index = evals[BASE_METRIC];
+  const input = num(item, "pricing", "price_1m_input_tokens");
+  const output = num(item, "pricing", "price_1m_output_tokens");
+  const cacheHit = num(item, "pricing", "price_1m_cache_hit_tokens");
+  const cost = item["artificial_analysis_intelligence_index_cost"];
+  const task =
+    num(cost, "cost_per_task", "total_cost") ??
+    num(cost, "cost_per_task") ??
+    num(cost, "total_cost");
+  const tps =
+    num(item, "performance", "median_output_tokens_per_second") ??
+    num(item, "performance_v3", "mean_output_tokens_per_second");
+  const ttft =
+    num(item, "performance", "median_time_to_first_answer_token_seconds") ??
+    num(item, "performance_v3", "mean_time_to_first_answer_token_seconds") ??
+    num(item, "performance", "median_time_to_first_token_seconds");
+  const counts = item["artificial_analysis_intelligence_index_token_counts"];
+  const tokens: Record<string, number> = {};
+  for (const k of ["input_tokens", "output_tokens", "reasoning_tokens", "answer_tokens"] as const) {
+    const v = num(counts, k);
+    if (v !== undefined) tokens[k] = v;
+  }
+  const creator = isRecord(item["model_creator"]) ? item["model_creator"]["name"] : undefined;
+
+  if (
+    !isNonEmptyString(item["id"]) ||
+    !isNonEmptyString(item["name"]) ||
+    !isNonEmptyString(item["slug"]) ||
+    index === undefined ||
+    input === undefined ||
+    output === undefined ||
+    task === undefined ||
+    tps === undefined ||
+    ttft === undefined
+  ) {
+    return null;
   }
   return {
+    id: item["id"],
+    name: item["name"],
+    slug: item["slug"],
+    creator: isNonEmptyString(creator) ? creator : "Unknown",
+    index,
+    input,
+    output,
+    ...(cacheHit !== undefined ? { cache_hit: cacheHit } : {}),
+    task,
+    tps,
+    ttft,
+    evals,
+    ...(Object.keys(tokens).length > 0 ? { tokens: tokens as AATokenCounts } : {}),
+    url: `https://artificialanalysis.ai/models/${item["slug"]}`,
+  };
+}
+
+async function fetchApiPages(
+  url: string,
+  apiKey: string,
+): Promise<{ ok: true; items: unknown[]; version: number } | { ok: false; status: number }> {
+  const items: unknown[] = [];
+  let version = 5;
+  for (let page = 1; page <= 50; page += 1) {
+    const resp = await fetch(`${url}?page=${page}`, {
+      headers: { "x-api-key": apiKey, accept: "application/json" },
+    });
+    if (!resp.ok) return { ok: false, status: resp.status };
+    const raw: unknown = await resp.json();
+    if (!isRecord(raw) || !Array.isArray(raw["data"])) {
+      throw new Error(`Unexpected AA API response shape from ${url}`);
+    }
+    items.push(...raw["data"]);
+    const v = raw["intelligence_index_version"];
+    if (isFiniteNumber(v)) version = v;
+    const hasMore = isRecord(raw["pagination"]) && raw["pagination"]["has_more"] === true;
+    if (!hasMore) break;
+  }
+  return { ok: true, items, version };
+}
+
+async function fetchFromApi(apiKey: string): Promise<CachedBenchmarksFile> {
+  let tier: "pro" | "free" = "pro";
+  let url = AA_API_BASE;
+  let res = await fetchApiPages(url, apiKey);
+  if (!res.ok && (res.status === 401 || res.status === 403)) {
+    tier = "free";
+    url = `${AA_API_BASE}/free`;
+    res = await fetchApiPages(url, apiKey);
+  }
+  if (!res.ok) throw new Error(`AA API request failed with HTTP ${res.status} (${url}).`);
+  const models = res.items.map(normalizeAAApiModel).filter((m): m is AAModelRecord => m !== null);
+  if (models.length === 0) throw new Error("AA API returned zero usable models.");
+  return {
     fetched_at: new Date().toISOString(),
-    source: "Artificial Analysis API v2",
-    intelligence_index_version: 5,
-    attribution: "Data provided by Artificial Analysis (https://artificialanalysis.ai/)",
+    source: "artificial_analysis_api",
+    source_url: url,
+    api_tier: tier,
+    intelligence_index_version: res.version,
+    attribution: ATTRIBUTION,
     models,
   };
 }
 
+async function fetchFromMirror(): Promise<CachedBenchmarksFile> {
+  const resp = await fetch(MIRROR_URL, { headers: { accept: "application/json" } });
+  if (!resp.ok) throw new Error(`Benchmark mirror request failed with HTTP ${resp.status}.`);
+  const raw: unknown = await resp.json();
+  return parseBenchmarks(raw, "artificial_analysis_mirror", MIRROR_URL);
+}
+
+function parseBenchmarks(
+  raw: unknown,
+  fallbackSource: BenchmarkSource,
+  fallbackUrl: string,
+): CachedBenchmarksFile {
+  if (!isRecord(raw) || !Array.isArray(raw["models"])) {
+    throw new Error("Benchmark snapshot is missing a 'models' array.");
+  }
+  const models = raw["models"].map(parseAAModelRecord).filter((m): m is AAModelRecord => m !== null);
+  if (models.length === 0) throw new Error("Benchmark snapshot contained zero valid models.");
+  const source: BenchmarkSource =
+    raw["source"] === "artificial_analysis_api" ? "artificial_analysis_api" : fallbackSource;
+  const tier = raw["api_tier"];
+  return {
+    fetched_at: isNonEmptyString(raw["fetched_at"]) ? raw["fetched_at"] : new Date().toISOString(),
+    source,
+    source_url: isNonEmptyString(raw["source_url"]) ? raw["source_url"] : fallbackUrl,
+    ...(tier === "pro" || tier === "free" ? { api_tier: tier } : {}),
+    intelligence_index_version: isFiniteNumber(raw["intelligence_index_version"])
+      ? raw["intelligence_index_version"]
+      : 5,
+    attribution: isNonEmptyString(raw["attribution"]) ? raw["attribution"] : ATTRIBUTION,
+    models,
+  };
+}
+
+async function fetchFullBenchmarks(mode: "auto" | "mirror" | "api"): Promise<CachedBenchmarksFile> {
+  const apiKey = (process.env["ARTIFICIAL_ANALYSIS_API_KEY"] ?? process.env["AA_API_KEY"])?.trim();
+  if (mode === "api" && !apiKey) {
+    throw new Error("--source=api requires ARTIFICIAL_ANALYSIS_API_KEY in the environment.");
+  }
+  if (mode !== "mirror" && apiKey) return fetchFromApi(apiKey);
+  return fetchFromMirror();
+}
+
 async function loadCachedBenchmarks(): Promise<CachedBenchmarksFile | null> {
   try {
-    const text = await readFile(BENCHMARKS_PATH, "utf8");
-    const raw: unknown = JSON.parse(text);
-    const parsed = parseAASnapshot(raw);
-    const rec = raw as Record<string, unknown>;
-    const source =
-      rec["source"] === "artificial_analysis_api"
-        ? "artificial_analysis_api"
-        : "artificial_analysis_mirror";
-    const sourceUrl = isNonEmptyString(rec["source_url"])
-      ? rec["source_url"]
-      : MIRROR_URL;
+    return parseBenchmarks(JSON.parse(await readFile(PATHS.benchmarks, "utf8")), "artificial_analysis_mirror", MIRROR_URL);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+/** Reads catalog/tracked lists from either a v1 or v2 frontier. */
+async function loadExistingFrontierLists(): Promise<{
+  catalog: readonly CatalogModelSpec[];
+  tracked: readonly string[];
+  unmatched: readonly string[];
+} | null> {
+  try {
+    const raw: unknown = JSON.parse(await readFile(PATHS.frontier, "utf8"));
+    if (!isRecord(raw)) return null;
+    const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter(isNonEmptyString) : []);
     return {
-      fetched_at: parsed.fetched_at,
-      source,
-      source_url: sourceUrl,
-      intelligence_index_version: parsed.intelligence_index_version,
-      attribution: parsed.attribution,
-      models: parsed.models,
+      catalog: Array.isArray(raw["catalog"]) ? (raw["catalog"] as CatalogModelSpec[]) : [],
+      tracked: strs(raw["tracked_models"]),
+      unmatched: strs(raw["unmatched_models"]),
     };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -483,150 +581,9 @@ async function loadCachedBenchmarks(): Promise<CachedBenchmarksFile | null> {
   }
 }
 
-async function fetchFullBenchmarks(
-  sourceMode: "auto" | "mirror" | "api",
-): Promise<CachedBenchmarksFile> {
-  const apiKey = process.env["ARTIFICIAL_ANALYSIS_API_KEY"]?.trim();
-  const useApi =
-    sourceMode === "api" || (sourceMode === "auto" && Boolean(apiKey));
-
-  if (useApi) {
-    if (!apiKey) {
-      throw new Error(
-        "--source=api requires ARTIFICIAL_ANALYSIS_API_KEY in the environment.",
-      );
-    }
-    const resp = await fetch(AA_API_URL, {
-      headers: { "x-api-key": apiKey, accept: "application/json" },
-    });
-    if (!resp.ok) {
-      throw new Error(`AA API request failed with HTTP ${resp.status}.`);
-    }
-    const raw: unknown = await resp.json();
-    const snapshot = normalizeAAApiPayload(raw);
-    return {
-      fetched_at: snapshot.fetched_at,
-      source: "artificial_analysis_api",
-      source_url: AA_API_URL,
-      intelligence_index_version: snapshot.intelligence_index_version,
-      attribution: snapshot.attribution,
-      models: snapshot.models,
-    };
-  }
-
-  const resp = await fetch(MIRROR_URL, {
-    headers: { accept: "application/json" },
-  });
-  if (!resp.ok) {
-    throw new Error(`Benchmark mirror request failed with HTTP ${resp.status}.`);
-  }
-  const raw: unknown = await resp.json();
-  const snapshot = parseAASnapshot(raw);
-  return {
-    fetched_at: snapshot.fetched_at,
-    source: "artificial_analysis_mirror",
-    source_url: MIRROR_URL,
-    intelligence_index_version: snapshot.intelligence_index_version,
-    attribution: snapshot.attribution,
-    models: snapshot.models,
-  };
-}
-
-async function loadExistingFrontier(): Promise<FrontierFile | null> {
-  try {
-    const rawText = await readFile(FRONTIER_PATH, "utf8");
-    const parsed: unknown = JSON.parse(rawText);
-    if (!isRecord(parsed)) return null;
-    return parsed as unknown as FrontierFile;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
-}
-
-async function loadOptionalOverridesFile(path: string): Promise<OverridesFile | null> {
-  try {
-    const rawText = await readFile(path, "utf8");
-    const parsed: unknown = JSON.parse(rawText);
-    if (!isRecord(parsed)) {
-      throw new Error(`${path} must be a JSON object.`);
-    }
-    return parsed as unknown as OverridesFile;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return null;
-    }
-    throw err;
-  }
-}
-
-function mergeEntryOverrideMap(
-  base: Readonly<Record<string, EntryOverride>> | undefined,
-  local: Readonly<Record<string, EntryOverride>> | undefined,
-): Readonly<Record<string, EntryOverride>> | undefined {
-  if (!base && !local) return undefined;
-  const out: Record<string, EntryOverride> = { ...(base ?? {}) };
-  for (const [key, patch] of Object.entries(local ?? {})) {
-    const prev = out[key];
-    out[key] = prev
-      ? {
-          ...prev,
-          ...patch,
-          ...(prev.rung_constraints || patch.rung_constraints
-            ? {
-                rung_constraints: {
-                  ...(prev.rung_constraints ?? {}),
-                  ...(patch.rung_constraints ?? {}),
-                },
-              }
-            : {}),
-        }
-      : patch;
-  }
-  return out;
-}
-
-async function loadOverrides(): Promise<OverridesFile> {
-  const [base, local] = await Promise.all([
-    loadOptionalOverridesFile(OVERRIDES_PATH),
-    loadOptionalOverridesFile(LOCAL_OVERRIDES_PATH),
-  ]);
-  if (!base && !local) return { schema_version: 1 };
-  if (!local) return base ?? { schema_version: 1 };
-  if (!base) return local;
-
-  const mergedThresholds: Partial<Record<Rung, Partial<RungThreshold>>> = {};
-  for (const rung of RUNGS) {
-    const b = base.rung_thresholds?.[rung];
-    const l = local.rung_thresholds?.[rung];
-    if (b || l) {
-      mergedThresholds[rung] = { ...(b ?? {}), ...(l ?? {}) };
-    }
-  }
-
-  const modelOverrides = mergeEntryOverrideMap(
-    base.model_overrides,
-    local.model_overrides,
-  );
-  const entryOverrides = mergeEntryOverrideMap(
-    base.entry_overrides,
-    local.entry_overrides,
-  );
-  const maxEntries =
-    local.max_entries_per_provider_rung ?? base.max_entries_per_provider_rung;
-
-  return {
-    schema_version: 1,
-    ...(Object.keys(mergedThresholds).length > 0
-      ? { rung_thresholds: mergedThresholds }
-      : {}),
-    ...(maxEntries !== undefined
-      ? { max_entries_per_provider_rung: maxEntries }
-      : {}),
-    ...(modelOverrides ? { model_overrides: modelOverrides } : {}),
-    ...(entryOverrides ? { entry_overrides: entryOverrides } : {}),
-  };
-}
+// ---------------------------------------------------------------------------
+// Frontier construction
+// ---------------------------------------------------------------------------
 
 function mergeCatalogs(
   base: readonly CatalogModelSpec[],
@@ -634,471 +591,184 @@ function mergeCatalogs(
   replace: boolean,
 ): readonly CatalogModelSpec[] {
   const byKey = new Map<string, CatalogModelSpec>();
-  if (!replace) {
-    for (const item of base) {
-      byKey.set(`${item.provider}:${item.model}`, item);
-    }
-  }
-  for (const item of incoming) {
-    byKey.set(`${item.provider}:${item.model}`, item);
-  }
+  if (!replace) for (const item of base) byKey.set(`${item.provider}:${item.model}`, item);
+  for (const item of incoming) byKey.set(`${item.provider}:${item.model}`, item);
   return [...byKey.values()].sort((a, b) =>
     `${a.provider}:${a.model}`.localeCompare(`${b.provider}:${b.model}`),
   );
 }
 
-function mergeThresholds(
-  overrides: OverridesFile,
-): Readonly<Record<Rung, RungThreshold>> {
-  const out: Record<Rung, RungThreshold> = {
-    R0: { ...DEFAULT_RUNG_THRESHOLDS.R0 },
-    R1: { ...DEFAULT_RUNG_THRESHOLDS.R1 },
-    R2: { ...DEFAULT_RUNG_THRESHOLDS.R2 },
-    R3: { ...DEFAULT_RUNG_THRESHOLDS.R3 },
-  };
-  for (const rung of RUNGS) {
-    const patch = overrides.rung_thresholds?.[rung];
-    if (!patch) continue;
-    out[rung] = {
-      min_index: patch.min_index ?? out[rung].min_index,
-      max_index_exclusive:
-        patch.max_index_exclusive !== undefined
-          ? patch.max_index_exclusive
-          : out[rung].max_index_exclusive,
-      max_ttft_s: patch.max_ttft_s ?? out[rung].max_ttft_s,
-    };
-  }
-  return out;
-}
-
-function classifyRung(
-  index: number,
-  thresholds: Readonly<Record<Rung, RungThreshold>>,
-): Rung | null {
-  for (const rung of RUNGS) {
-    const t = thresholds[rung];
-    const aboveMin = index >= t.min_index;
-    const belowMax =
-      t.max_index_exclusive === null || index < t.max_index_exclusive;
-    if (aboveMin && belowMax) return rung;
-  }
-  return null;
-}
-
-function computeParetoIds(candidates: readonly MappedCandidate[]): ReadonlySet<string> {
-  const sorted = [...candidates].sort((a, b) => {
-    if (a.record.task !== b.record.task) return a.record.task - b.record.task;
-    return b.record.index - a.record.index;
-  });
-  const pareto = new Set<string>();
-  let bestIndex = -Infinity;
-  for (const item of sorted) {
-    if (item.record.index > bestIndex) {
-      pareto.add(item.id);
-      bestIndex = item.record.index;
-    }
-  }
-  return pareto;
-}
-
-function resolveOverride(
-  candidate: MappedCandidate,
-  overrides: OverridesFile,
-): EntryOverride {
-  const modelKey = `${candidate.provider}:${candidate.model}`;
-  const byModel = overrides.model_overrides?.[modelKey];
-  const byEntry = overrides.entry_overrides?.[candidate.id];
-
-  const mergedConstraints: Partial<Record<Rung, RungConstraint>> = {
-    ...(byModel?.rung_constraints ?? {}),
-    ...(byEntry?.rung_constraints ?? {}),
-  };
-
-  const result: {
-    exclude?: boolean;
-    max_rung?: Rung;
-    extra_rungs?: readonly Rung[];
-    rung_constraints?: Readonly<Partial<Record<Rung, RungConstraint>>>;
-    rank_bias?: number;
-    notes?: string;
-  } = {};
-
-  const exclude = byEntry?.exclude ?? byModel?.exclude;
-  if (exclude !== undefined) result.exclude = exclude;
-
-  const maxRung = byEntry?.max_rung ?? byModel?.max_rung;
-  if (maxRung !== undefined) result.max_rung = maxRung;
-
-  const extraRungs = byEntry?.extra_rungs ?? byModel?.extra_rungs;
-  if (extraRungs !== undefined) result.extra_rungs = extraRungs;
-
-  if (Object.keys(mergedConstraints).length > 0) {
-    result.rung_constraints = mergedConstraints;
-  }
-
-  const rankBias = (byModel?.rank_bias ?? 0) + (byEntry?.rank_bias ?? 0);
-  if (rankBias !== 0) result.rank_bias = rankBias;
-
-  const notes = byEntry?.notes ?? byModel?.notes;
-  if (notes !== undefined) result.notes = notes;
-
-  return result;
-}
-
-async function checkMissingModels(liveModels: readonly string[]): Promise<void> {
-  const frontier = await loadExistingFrontier();
-  if (!frontier) {
-    console.log("frontier.json does not exist yet. Run sync-benchmarks.ts first.");
-    process.exit(2);
-  }
-  const known = new Set([
-    ...frontier.tracked_models,
-    ...(frontier.unmatched_models ?? []),
-  ]);
-  const missing = liveModels.filter(
-    (m) => !isIgnoredModel(m) && !known.has(m),
-  );
-  if (missing.length === 0) {
-    console.log("All live models are already accounted for in frontier.json.");
-    process.exit(0);
-  }
-  console.log(`New/uncalibrated models detected: ${missing.join(", ")}`);
-  process.exit(2);
-}
-
 function mapCatalog(
   catalog: readonly CatalogModelSpec[],
   benchmarks: CachedBenchmarksFile,
-  overrides: OverridesFile,
-): {
-  readonly candidates: readonly MappedCandidate[];
-  readonly unmatched: readonly string[];
-} {
+): { candidates: readonly MappedCandidate[]; unmatched: readonly string[] } {
   const candidates: MappedCandidate[] = [];
-  const unmatched: string[] = [];
-  const seenIds = new Set<string>();
-
+  const unmatched = new Set<string>();
+  const seen = new Set<string>();
   for (const spec of catalog) {
-    const modelOverride = overrides.model_overrides?.[`${spec.provider}:${spec.model}`];
-    if (modelOverride?.exclude) continue;
-
     const matches = matchSpecToAARecords(spec, benchmarks.models, benchmarks.source);
     if (matches.length === 0) {
-      unmatched.push(spec.model);
+      unmatched.add(spec.model);
       continue;
     }
-
-    for (const candidate of matches) {
-      if (seenIds.has(candidate.id)) continue;
-      const ov = resolveOverride(candidate, overrides);
-      if (ov.exclude) continue;
-      seenIds.add(candidate.id);
-      candidates.push(candidate);
+    for (const c of matches) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      candidates.push(c);
     }
   }
-
-  return {
-    candidates,
-    unmatched: [...new Set(unmatched)].sort(),
-  };
+  return { candidates, unmatched: [...unmatched].sort() };
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.checkModels !== null) {
-    await checkMissingModels(args.checkModels);
-    return;
+export function buildFrontier(
+  catalog: readonly CatalogModelSpec[],
+  benchmarks: CachedBenchmarksFile,
+  minCoverage: number,
+): FrontierFile {
+  const { candidates, unmatched } = mapCatalog(catalog, benchmarks);
+
+  const coverage: Record<string, number> = {};
+  const mappers = new Map<string, (x: number) => number>();
+  for (const metric of collectMetricNames(benchmarks.models)) {
+    const m = buildQuantileMapper(benchmarks.models, metric);
+    if (!m) continue;
+    coverage[metric] = m.n;
+    if (m.n >= minCoverage || metric === BASE_METRIC) mappers.set(metric, m.map);
   }
 
-  const [existingFrontier, overrides] = await Promise.all([
-    loadExistingFrontier(),
-    loadOverrides(),
-  ]);
-  const thresholds = mergeThresholds(overrides);
-  const maxPerProviderRung = overrides.max_entries_per_provider_rung ?? 2;
+  const verbosityRef = median(benchmarks.models.map((m) => aaOutputTokens(m).tokens));
+  const r2 = (n: number): number => Math.round(n * 100) / 100;
 
-  const baseCatalog = existingFrontier?.catalog ?? SEED_CATALOG;
-  const incomingSpecs: CatalogModelSpec[] = [];
-  if (args.capabilitiesPath !== null) {
-    incomingSpecs.push(...(await parseCapabilitiesFile(args.capabilitiesPath)));
-  }
-  if (args.modelsArg !== null) {
-    incomingSpecs.push(...parseModelArgSpecs(args.modelsArg));
-  }
-
-  const hasIncoming = args.capabilitiesPath !== null || args.modelsArg !== null;
-  const catalog = mergeCatalogs(baseCatalog, incomingSpecs, args.replaceCatalog);
-
-  // Offline-first when matching incoming models against cached benchmarks.json;
-  // automatically fetches full AA snapshot if cache is missing, a model isn't in cache,
-  // or user ran a manual sync / --refresh.
-  let benchmarks = await loadCachedBenchmarks();
-  let fetchedFresh = false;
-
-  const needsInitialFetch = benchmarks === null;
-  const manualRefresh = !hasIncoming && !args.offline;
-  let shouldFetch = args.refresh || needsInitialFetch || manualRefresh;
-
-  if (!shouldFetch && benchmarks !== null && hasIncoming && !args.offline) {
-    const probe = mapCatalog(catalog, benchmarks, overrides);
-    if (probe.unmatched.length > 0) {
-      shouldFetch = true;
+  const entries: FrontierEntry[] = candidates.map((c) => {
+    const metrics: Record<string, number> = {};
+    for (const [metric, map] of mappers) {
+      const raw = metric === BASE_METRIC ? c.record.index : c.record.evals?.[metric];
+      if (raw === undefined) continue;
+      metrics[metric] = r2(map(raw));
     }
-  }
-
-  if (shouldFetch) {
-    if (args.offline) {
-      throw new Error(
-        "No cached benchmarks.json found and --offline was specified.",
-      );
-    }
-    benchmarks = await fetchFullBenchmarks(args.source);
-    fetchedFresh = true;
-    if (!args.dryRun) {
-      await writeFile(
-        BENCHMARKS_PATH,
-        `${JSON.stringify(benchmarks, null, 2)}\n`,
-        "utf8",
-      );
-    }
-  }
-
-  if (!benchmarks) {
-    throw new Error("Unable to load Artificial Analysis benchmarks.");
-  }
-
-  const { candidates: mapped, unmatched } = mapCatalog(
-    catalog,
-    benchmarks,
-    overrides,
-  );
-
-  // Apply rung TTFT guardrails before Pareto computation so 350s–740s thinking-loop
-  // outliers cannot dominate practical points.
-  const ttftEligible = mapped.filter((c) => {
-    const rung = classifyRung(c.record.index, thresholds);
-    if (rung === null) return false;
-    return c.record.ttft <= thresholds[rung].max_ttft_s;
+    const out = aaOutputTokens(c.record);
+    return {
+      id: c.id,
+      provider: c.provider,
+      family: c.family,
+      model: c.model,
+      effort: c.effort,
+      options: c.options,
+      aa: {
+        slug: c.record.slug,
+        name: c.record.name,
+        index: c.record.index,
+        input: c.record.input,
+        output: c.record.output,
+        cache_hit: c.record.cache_hit ?? null,
+        task: c.record.task,
+        tps: c.record.tps,
+        ttft: c.record.ttft,
+        output_tokens: Math.round(out.tokens),
+        output_tokens_measured: out.measured,
+      },
+      metrics,
+    };
   });
 
-  // Compute global and per-provider Pareto frontiers on (task cost, intelligence index)
-  const globalParetoIds = computeParetoIds(ttftEligible);
-  const providerParetoIds = new Set<string>();
+  entries.sort(
+    (a, b) =>
+      a.provider.localeCompare(b.provider) ||
+      a.model.localeCompare(b.model) ||
+      EFFORT_LEVELS.indexOf(a.effort) - EFFORT_LEVELS.indexOf(b.effort),
+  );
 
-  const byProvider = new Map<string, MappedCandidate[]>();
-  for (const c of ttftEligible) {
-    const list = byProvider.get(c.provider) ?? [];
-    list.push(c);
-    byProvider.set(c.provider, list);
-  }
-  for (const list of byProvider.values()) {
-    for (const id of computeParetoIds(list)) {
-      providerParetoIds.add(id);
-    }
-  }
-
-  // Keep provider-Pareto entries, capped to top N per (provider, primary_rung)
-  const frontierCandidates = ttftEligible.filter((c) => providerParetoIds.has(c.id));
-  const byProviderRung = new Map<string, MappedCandidate[]>();
-  for (const c of frontierCandidates) {
-    const rung = classifyRung(c.record.index, thresholds);
-    if (rung === null) continue;
-    const key = `${c.provider}:${rung}`;
-    const bucket = byProviderRung.get(key) ?? [];
-    bucket.push(c);
-    byProviderRung.set(key, bucket);
-  }
-
-  const kept: MappedCandidate[] = [];
-  for (const bucket of byProviderRung.values()) {
-    const sortedByIndex = [...bucket].sort(
-      (a, b) => b.record.index - a.record.index || a.record.task - b.record.task,
-    );
-    if (sortedByIndex.length <= maxPerProviderRung) {
-      kept.push(...sortedByIndex);
-    } else {
-      const top = sortedByIndex[0];
-      const cheapest = [...bucket].sort(
-        (a, b) => a.record.task - b.record.task || b.record.index - a.record.index,
-      )[0];
-      const selected: MappedCandidate[] = [];
-      if (top) selected.push(top);
-      if (cheapest && cheapest.id !== top?.id) selected.push(cheapest);
-      for (const item of sortedByIndex) {
-        if (selected.length >= maxPerProviderRung) break;
-        if (!selected.some((s) => s.id === item.id)) selected.push(item);
-      }
-      kept.push(...selected);
-    }
-  }
-
-  interface DraftEntry {
-    readonly candidate: MappedCandidate;
-    readonly primaryRung: Rung;
-    readonly rungs: readonly Rung[];
-    readonly maxRung: Rung;
-    readonly constraints: Readonly<Partial<Record<Rung, RungConstraint>>> | undefined;
-    readonly rankBias: number;
-    readonly notes: string | undefined;
-  }
-
-  const drafts: DraftEntry[] = [];
-  for (const candidate of kept) {
-    const naturalRung = classifyRung(candidate.record.index, thresholds);
-    if (naturalRung === null) continue;
-    const ov = resolveOverride(candidate, overrides);
-
-    const maxRung: Rung = ov.max_rung ?? naturalRung;
-    const effectivePrimary: Rung =
-      RUNG_ORDER[naturalRung] <= RUNG_ORDER[maxRung] ? naturalRung : maxRung;
-
-    const rungSet = new Set<Rung>([effectivePrimary]);
-    for (const extra of ov.extra_rungs ?? []) {
-      if (RUNG_ORDER[extra] <= RUNG_ORDER[maxRung]) {
-        rungSet.add(extra);
-      }
-    }
-
-    const sortedRungs = [...rungSet].sort((a, b) => RUNG_ORDER[a] - RUNG_ORDER[b]);
-    drafts.push({
-      candidate,
-      primaryRung: effectivePrimary,
-      rungs: sortedRungs,
-      maxRung,
-      constraints: ov.rung_constraints,
-      rankBias: ov.rank_bias ?? 0,
-      notes: ov.notes,
-    });
-  }
-
-  const rungRanksById = new Map<string, Partial<Record<Rung, number>>>();
-  for (const d of drafts) {
-    rungRanksById.set(d.candidate.id, {});
-  }
-
-  for (const rung of RUNGS) {
-    const inRung = drafts
-      .filter((d) => d.rungs.includes(rung))
-      .sort((a, b) => {
-        const aConstrained = a.constraints?.[rung] ? 1 : 0;
-        const bConstrained = b.constraints?.[rung] ? 1 : 0;
-        if (aConstrained !== bConstrained) return aConstrained - bConstrained;
-
-        const aGlobal = globalParetoIds.has(a.candidate.id) ? 1 : 0;
-        const bGlobal = globalParetoIds.has(b.candidate.id) ? 1 : 0;
-        const costPenaltyWeight =
-          rung === "R0" ? 6 : rung === "R1" ? 4 : rung === "R2" ? 1.5 : 0;
-
-        const aScore =
-          a.candidate.record.index +
-          aGlobal * 4 -
-          costPenaltyWeight * Math.log10(Math.max(a.candidate.record.task, 0.05)) +
-          a.rankBias;
-        const bScore =
-          b.candidate.record.index +
-          bGlobal * 4 -
-          costPenaltyWeight * Math.log10(Math.max(b.candidate.record.task, 0.05)) +
-          b.rankBias;
-
-        if (bScore !== aScore) return bScore - aScore;
-        return a.candidate.record.task - b.candidate.record.task;
-      });
-
-    inRung.forEach((d, idx) => {
-      const map = rungRanksById.get(d.candidate.id);
-      if (map) map[rung] = idx + 1;
-    });
-  }
-
-  const entries: FrontierEntry[] = drafts
-    .sort((a, b) => {
-      if (RUNG_ORDER[a.primaryRung] !== RUNG_ORDER[b.primaryRung]) {
-        return RUNG_ORDER[a.primaryRung] - RUNG_ORDER[b.primaryRung];
-      }
-      const aRank = rungRanksById.get(a.candidate.id)?.[a.primaryRung] ?? 99;
-      const bRank = rungRanksById.get(b.candidate.id)?.[b.primaryRung] ?? 99;
-      return aRank - bRank;
-    })
-    .map((d) => {
-      const entry: FrontierEntry = {
-        id: d.candidate.id,
-        provider: d.candidate.provider,
-        family: d.candidate.family,
-        model: d.candidate.model,
-        options: d.candidate.options,
-        primary_rung: d.primaryRung,
-        rungs: d.rungs,
-        max_rung: d.maxRung,
-        ...(d.constraints ? { rung_constraints: d.constraints } : {}),
-        global_pareto: globalParetoIds.has(d.candidate.id),
-        provider_pareto: true,
-        rung_ranks: rungRanksById.get(d.candidate.id) ?? {},
-        benchmarks: {
-          source: d.candidate.source,
-          aa_slug: d.candidate.record.slug,
-          aa_name: d.candidate.record.name,
-          intelligence_index: d.candidate.record.index,
-          task_cost_usd: Number(d.candidate.record.task.toFixed(4)),
-          blended_price_per_1m: d.candidate.record.blended,
-          output_tps: d.candidate.record.tps,
-          ttft_s: d.candidate.record.ttft,
-        },
-        ...(d.notes ? { notes: d.notes } : {}),
-      };
-      return entry;
-    });
-
-  const matchedModels = new Set(mapped.map((m) => m.model));
-  const trackedModels = [...matchedModels].sort();
-
-  const output: FrontierFile = {
-    schema_version: 1,
+  return {
+    schema_version: 2,
     generated_at: new Date().toISOString(),
     benchmark_fetched_at: benchmarks.fetched_at,
-    intelligence_index_version: benchmarks.intelligence_index_version,
+    source: benchmarks.source,
     source_url: benchmarks.source_url,
+    ...(benchmarks.api_tier ? { api_tier: benchmarks.api_tier } : {}),
+    intelligence_index_version: benchmarks.intelligence_index_version,
     attribution: benchmarks.attribution,
-    rung_thresholds: thresholds,
+    verbosity_reference_tokens: Math.round(verbosityRef),
+    metric_coverage: coverage,
     catalog,
     entries,
-    tracked_models: trackedModels,
+    tracked_models: [...new Set(candidates.map((c) => c.model))].sort(),
     unmatched_models: unmatched,
   };
-
-  if (args.dryRun) {
-    console.log(JSON.stringify(output, null, 2));
-    return;
-  }
-
-  await writeFile(FRONTIER_PATH, `${JSON.stringify(output, null, 2)}\n`, "utf8");
-
-  const cacheNote = fetchedFresh
-    ? `fetched ${benchmarks.models.length} AA models into benchmarks.json`
-    : `matched offline against cached benchmarks.json (${benchmarks.models.length} AA models)`;
-  console.log(
-    `Wrote ${entries.length} frontier entries to frontier.json (AA v${benchmarks.intelligence_index_version}, ${cacheNote}).`,
-  );
-  if (unmatched.length > 0) {
-    console.log(`Unmatched models (not yet in AA snapshot): ${unmatched.join(", ")}`);
-  }
-
-  for (const rung of RUNGS) {
-    const rows = entries
-      .filter((e) => e.rungs.includes(rung))
-      .sort((a, b) => (a.rung_ranks[rung] ?? 99) - (b.rung_ranks[rung] ?? 99));
-    console.log(`\n[${rung}]`);
-    for (const r of rows) {
-      const rank = r.rung_ranks[rung] ?? 99;
-      const tag = r.global_pareto ? "global-pareto" : "provider-pareto";
-      const constrained = r.rung_constraints?.[rung] ? " [constrained]" : "";
-      console.log(
-        `  #${rank} ${r.id.padEnd(36)} idx=${String(r.benchmarks.intelligence_index).padStart(4)}  task=$${r.benchmarks.task_cost_usd.toFixed(2).padStart(5)}  ttft=${String(r.benchmarks.ttft_s).padStart(5)}s  (${tag})${constrained}`,
-      );
-    }
-  }
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
-});
+async function checkMissingModels(liveModels: readonly string[]): Promise<number> {
+  const lists = await loadExistingFrontierLists();
+  if (!lists) {
+    console.log("frontier.json does not exist yet. Run sync-benchmarks.ts first.");
+    return 2;
+  }
+  const known = new Set([...lists.tracked, ...lists.unmatched]);
+  const missing = liveModels.filter((m) => !isIgnoredModel(m) && !known.has(m));
+  if (missing.length === 0) {
+    console.log("All live models are already accounted for in frontier.json.");
+    return 0;
+  }
+  console.log(`New/uncalibrated models detected: ${missing.join(", ")}`);
+  return 2;
+}
+
+async function main(): Promise<number> {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.checkModels !== null) return checkMissingModels(args.checkModels);
+
+  const roles = loadRoles();
+  const existing = await loadExistingFrontierLists();
+  const incoming: CatalogModelSpec[] = [];
+  if (args.capabilitiesPath !== null) incoming.push(...(await parseCapabilitiesFile(args.capabilitiesPath)));
+  if (args.modelsArg !== null) incoming.push(...parseModelArgSpecs(args.modelsArg));
+  const hasIncoming = incoming.length > 0;
+  const baseCatalog = existing && existing.catalog.length > 0 ? existing.catalog : SEED_CATALOG;
+  const catalog = mergeCatalogs(baseCatalog, incoming, args.replaceCatalog);
+
+  let benchmarks = await loadCachedBenchmarks();
+  let shouldFetch = args.refresh || benchmarks === null || (!hasIncoming && !args.offline);
+  if (!shouldFetch && benchmarks && hasIncoming && !args.offline) {
+    shouldFetch = mapCatalog(catalog, benchmarks).unmatched.length > 0;
+  }
+  let fetched = false;
+  if (shouldFetch) {
+    if (args.offline) throw new Error("No cached benchmarks.json found and --offline was specified.");
+    benchmarks = await fetchFullBenchmarks(args.source);
+    fetched = true;
+  }
+  if (!benchmarks) throw new Error("Unable to load Artificial Analysis benchmarks.");
+
+  const frontier = buildFrontier(catalog, benchmarks, roles.defaults.min_metric_coverage);
+  if (args.dryRun) {
+    console.log(JSON.stringify(frontier, null, 2));
+    return 0;
+  }
+  if (fetched) await writeFile(PATHS.benchmarks, `${JSON.stringify(benchmarks, null, 2)}\n`, "utf8");
+  await writeFile(PATHS.frontier, `${JSON.stringify(frontier, null, 2)}\n`, "utf8");
+
+  const table = renderTable({ frontier, roles, overrides: loadOverrides(), quota: loadQuota() });
+  await writeFile(PATHS.routesTable, table, "utf8");
+
+  const usable = Object.entries(frontier.metric_coverage)
+    .filter(([m, n]) => n >= roles.defaults.min_metric_coverage || m === BASE_METRIC)
+    .map(([m]) => m);
+  console.log(
+    `Wrote ${frontier.entries.length} entries to frontier.json and routes.md (${benchmarks.source}${benchmarks.api_tier ? `/${benchmarks.api_tier}` : ""}, ${fetched ? "fetched" : "cached"} ${benchmarks.models.length} AA models, ${usable.length} usable metrics).`,
+  );
+  if (frontier.unmatched_models.length > 0) {
+    console.log(`Unmatched models (not in AA snapshot): ${frontier.unmatched_models.join(", ")}`);
+  }
+  console.log(table);
+  return 0;
+}
+
+const invokedDirectly =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((err: unknown) => {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    });
+}

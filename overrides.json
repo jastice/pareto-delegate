@@ -1,15 +1,10 @@
 {
-  "schema_version": 1,
-  "rung_thresholds": {
-    "R2": { "max_index_exclusive": 57 },
-    "R3": { "min_index": 57 }
-  },
-  "max_entries_per_provider_rung": 2,
-  "model_overrides": {
+  "schema_version": 2,
+  "_doc": "Applied at route time (no resync needed). Keys: 'provider:*', 'provider:model', 'provider:model:effort'; more specific keys win per field. Fields: exclude, max_floor, allowed_roles, floor_constraints{floor:{min_verifiability,allowed_categories,max_blast_radius}}, quality_bias (number or {role:number}, in index points), cost_multiplier. Machine/plan-specific entries go in overrides.local.json.",
+  "overrides": {
     "cursor:grok-4.7": {
-      "max_rung": "R1",
-      "extra_rungs": ["R1"],
-      "rung_constraints": {
+      "max_floor": "R1",
+      "floor_constraints": {
         "R1": {
           "min_verifiability": "strict",
           "allowed_categories": [
@@ -23,17 +18,7 @@
           "max_blast_radius": "isolated_module"
         }
       },
-      "notes": "Capped below general R1/R2 edits based on AA v5 score (~31–35) and high R1/R2 wall-clock latency."
-    }
-  },
-  "entry_overrides": {
-    "cursor:grok-4.7:low": {
-      "max_rung": "R0",
-      "rank_bias": 3,
-      "notes": "Fast R0 scout (~20s live); preferred over high on R0."
-    },
-    "cursor:grok-4.7:high": {
-      "notes": "Use for async strict-gate R1 surplus soak only (slower solve time than Gemini/Claude)."
+      "notes": "Never above R1, and at R1 only for strictly gated low-blast work. With AA index ~31–35 it currently clears only R0 floors; a positive quality_bias in overrides.local.json would admit it to the constrained R1 slot."
     },
     "cursor:grok-4.7:xhigh": {
       "exclude": true,

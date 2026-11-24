@@ -1,31 +1,14 @@
 {
-  "schema_version": 1,
-  "generated_at": "2026-11-24T05:30:28.566Z",
+  "schema_version": 2,
+  "generated_at": "2026-11-24T09:29:25.692Z",
   "benchmark_fetched_at": "2026-11-23T07:34:57.522Z",
-  "intelligence_index_version": 5,
+  "source": "artificial_analysis_mirror",
   "source_url": "https://raw.githubusercontent.com/terryds/bestvaluemodel/main/data/models.json",
+  "intelligence_index_version": 5,
   "attribution": "Data from Artificial Analysis (https://artificialanalysis.ai/). Attribution required.",
-  "rung_thresholds": {
-    "R0": {
-      "min_index": 24,
-      "max_index_exclusive": 40,
-      "max_ttft_s": 30
-    },
-    "R1": {
-      "min_index": 40,
-      "max_index_exclusive": 50,
-      "max_ttft_s": 45
-    },
-    "R2": {
-      "min_index": 50,
-      "max_index_exclusive": 57,
-      "max_ttft_s": 65
-    },
-    "R3": {
-      "min_index": 57,
-      "max_index_exclusive": null,
-      "max_ttft_s": 150
-    }
+  "verbosity_reference_tokens": 248457,
+  "metric_coverage": {
+    "artificial_analysis_intelligence_index": 134
   },
   "catalog": [
     {
@@ -131,296 +114,133 @@
   ],
   "entries": [
     {
-      "id": "claudeAgent:claude-opus-5-5:low",
-      "provider": "claudeAgent",
-      "family": "claude",
-      "model": "claude-opus-5-5",
+      "id": "antigravity:gemini-4-carbon:low",
+      "provider": "antigravity",
+      "family": "gemini",
+      "model": "gemini-4-carbon",
+      "effort": "low",
       "options": {
-        "effort": "low"
+        "thought_level": "low"
       },
-      "primary_rung": "R0",
-      "rungs": [
-        "R0"
-      ],
-      "max_rung": "R0",
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R0": 1
+      "aa": {
+        "slug": "gemini-4-carbon-low",
+        "name": "Gemini 4 Carbon (Low)",
+        "index": 54.2,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 7.1866,
+        "tps": 85,
+        "ttft": 2.73,
+        "output_tokens": 359330,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "claude-opus-5-5-low",
-        "aa_name": "Claude Opus 5.5 (Low, Default Fallback)",
-        "intelligence_index": 34.8,
-        "task_cost_usd": 0.9755,
-        "blended_price_per_1m": 8,
-        "output_tps": 78,
-        "ttft_s": 5.83
+      "metrics": {
+        "artificial_analysis_intelligence_index": 54.2
       }
     },
     {
-      "id": "claudeAgent:claude-haiku-5-5:medium",
-      "provider": "claudeAgent",
-      "family": "claude",
-      "model": "claude-haiku-5-5",
+      "id": "antigravity:gemini-4-carbon:medium",
+      "provider": "antigravity",
+      "family": "gemini",
+      "model": "gemini-4-carbon",
+      "effort": "medium",
       "options": {
-        "effort": "medium"
+        "thought_level": "medium"
       },
-      "primary_rung": "R0",
-      "rungs": [
-        "R0"
-      ],
-      "max_rung": "R0",
-      "global_pareto": true,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R0": 2
+      "aa": {
+        "slug": "gemini-4-carbon-medium",
+        "name": "Gemini 4 Carbon (Medium)",
+        "index": 58.3,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 6.5858,
+        "tps": 90,
+        "ttft": 31.12,
+        "output_tokens": 329290,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "claude-haiku-5-5-medium",
-        "aa_name": "Claude Haiku 5.5 (Medium)",
-        "intelligence_index": 24.6,
-        "task_cost_usd": 0.0918,
-        "blended_price_per_1m": 0.2,
-        "output_tps": 175,
-        "ttft_s": 12.66
+      "metrics": {
+        "artificial_analysis_intelligence_index": 58.3
       }
     },
     {
-      "id": "cursor:grok-4.7:low",
-      "provider": "cursor",
-      "family": "grok",
-      "model": "grok-4.7",
+      "id": "antigravity:gemini-4-carbon:high",
+      "provider": "antigravity",
+      "family": "gemini",
+      "model": "gemini-4-carbon",
+      "effort": "high",
       "options": {
-        "reasoning_effort": "low"
+        "thought_level": "high"
       },
-      "primary_rung": "R0",
-      "rungs": [
-        "R0"
-      ],
-      "max_rung": "R0",
-      "rung_constraints": {
-        "R1": {
-          "min_verifiability": "strict",
-          "allowed_categories": [
-            "research",
-            "log_triage",
-            "doc_summary",
-            "test_gen",
-            "mechanical_refactor",
-            "second_opinion_review"
-          ],
-          "max_blast_radius": "isolated_module"
-        }
+      "aa": {
+        "slug": "gemini-4-carbon",
+        "name": "Gemini 4 Carbon (High)",
+        "index": 60,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 7.7555,
+        "tps": 84,
+        "ttft": 121.14,
+        "output_tokens": 387775,
+        "output_tokens_measured": false
       },
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R0": 3
-      },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "grok-4-7-low",
-        "aa_name": "Grok 4.7 (Low)",
-        "intelligence_index": 31.1,
-        "task_cost_usd": 2.9222,
-        "blended_price_per_1m": 3,
-        "output_tps": 68,
-        "ttft_s": 6.08
-      },
-      "notes": "Fast R0 scout (~20s live); preferred over high on R0."
-    },
-    {
-      "id": "cursor:grok-4.7:high",
-      "provider": "cursor",
-      "family": "grok",
-      "model": "grok-4.7",
-      "options": {
-        "reasoning_effort": "high"
-      },
-      "primary_rung": "R0",
-      "rungs": [
-        "R0",
-        "R1"
-      ],
-      "max_rung": "R1",
-      "rung_constraints": {
-        "R1": {
-          "min_verifiability": "strict",
-          "allowed_categories": [
-            "research",
-            "log_triage",
-            "doc_summary",
-            "test_gen",
-            "mechanical_refactor",
-            "second_opinion_review"
-          ],
-          "max_blast_radius": "isolated_module"
-        }
-      },
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R0": 4,
-        "R1": 4
-      },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "grok-4-7-high",
-        "aa_name": "Grok 4.7 (High)",
-        "intelligence_index": 35.2,
-        "task_cost_usd": 6.1836,
-        "blended_price_per_1m": 3,
-        "output_tps": 72,
-        "ttft_s": 29.59
-      },
-      "notes": "Use for async strict-gate R1 surplus soak only (slower solve time than Gemini/Claude)."
+      "metrics": {
+        "artificial_analysis_intelligence_index": 60
+      }
     },
     {
       "id": "antigravity:gemini-4-hydrogen:low",
       "provider": "antigravity",
       "family": "gemini",
       "model": "gemini-4-hydrogen",
+      "effort": "low",
       "options": {
         "thought_level": "low"
       },
-      "primary_rung": "R0",
-      "rungs": [
-        "R0"
-      ],
-      "max_rung": "R0",
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R0": 5
+      "aa": {
+        "slug": "gemini-4-hydrogen-low",
+        "name": "Gemini 4 Hydrogen (Low)",
+        "index": 26.9,
+        "input": 1.5,
+        "output": 7.5,
+        "cache_hit": null,
+        "task": 0.2922,
+        "tps": 230,
+        "ttft": 8.47,
+        "output_tokens": 38960,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "gemini-4-hydrogen-low",
-        "aa_name": "Gemini 4 Hydrogen (Low)",
-        "intelligence_index": 26.9,
-        "task_cost_usd": 0.2922,
-        "blended_price_per_1m": 3,
-        "output_tps": 230,
-        "ttft_s": 8.47
+      "metrics": {
+        "artificial_analysis_intelligence_index": 26.9
       }
     },
     {
-      "id": "antigravity:gemini-4-neon:low",
+      "id": "antigravity:gemini-4-hydrogen:medium",
       "provider": "antigravity",
       "family": "gemini",
-      "model": "gemini-4-neon",
-      "options": {
-        "thought_level": "low"
-      },
-      "primary_rung": "R1",
-      "rungs": [
-        "R1"
-      ],
-      "max_rung": "R1",
-      "global_pareto": true,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R1": 1
-      },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "gemini-4-neon-low",
-        "aa_name": "Gemini 4 Neon (Low)",
-        "intelligence_index": 44.1,
-        "task_cost_usd": 0.7452,
-        "blended_price_per_1m": 6,
-        "output_tps": 122,
-        "ttft_s": 18.71
-      }
-    },
-    {
-      "id": "claudeAgent:claude-opus-5-5:medium",
-      "provider": "claudeAgent",
-      "family": "claude",
-      "model": "claude-opus-5-5",
-      "options": {
-        "effort": "medium"
-      },
-      "primary_rung": "R1",
-      "rungs": [
-        "R1"
-      ],
-      "max_rung": "R1",
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R1": 2
-      },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "claude-opus-5-5-medium",
-        "aa_name": "Claude Opus 5.5 (Medium, Default Fallback)",
-        "intelligence_index": 48.2,
-        "task_cost_usd": 2.4511,
-        "blended_price_per_1m": 8,
-        "output_tps": 81,
-        "ttft_s": 24.7
-      }
-    },
-    {
-      "id": "claudeAgent:claude-sonnet-5-5:high",
-      "provider": "claudeAgent",
-      "family": "claude",
-      "model": "claude-sonnet-5-5",
-      "options": {
-        "effort": "high"
-      },
-      "primary_rung": "R1",
-      "rungs": [
-        "R1"
-      ],
-      "max_rung": "R1",
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R1": 3
-      },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "claude-sonnet-5-5-high",
-        "aa_name": "Claude Sonnet 5.5 (High, Default Fallback)",
-        "intelligence_index": 41.5,
-        "task_cost_usd": 1.6361,
-        "blended_price_per_1m": 4,
-        "output_tps": 114,
-        "ttft_s": 11.73
-      }
-    },
-    {
-      "id": "antigravity:gemini-4-neon:medium",
-      "provider": "antigravity",
-      "family": "gemini",
-      "model": "gemini-4-neon",
+      "model": "gemini-4-hydrogen",
+      "effort": "medium",
       "options": {
         "thought_level": "medium"
       },
-      "primary_rung": "R2",
-      "rungs": [
-        "R2"
-      ],
-      "max_rung": "R2",
-      "global_pareto": true,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R2": 1
+      "aa": {
+        "slug": "gemini-4-hydrogen-medium",
+        "name": "Gemini 4 Hydrogen (Medium)",
+        "index": 41.2,
+        "input": 1.5,
+        "output": 7.5,
+        "cache_hit": null,
+        "task": 0.798,
+        "tps": 228,
+        "ttft": 14.14,
+        "output_tokens": 106400,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "gemini-4-neon-medium",
-        "aa_name": "Gemini 4 Neon (Medium)",
-        "intelligence_index": 54.9,
-        "task_cost_usd": 1.9046,
-        "blended_price_per_1m": 6,
-        "output_tps": 117,
-        "ttft_s": 30.87
+      "metrics": {
+        "artificial_analysis_intelligence_index": 41.2
       }
     },
     {
@@ -428,86 +248,103 @@
       "provider": "antigravity",
       "family": "gemini",
       "model": "gemini-4-hydrogen",
+      "effort": "high",
       "options": {
         "thought_level": "high"
       },
-      "primary_rung": "R2",
-      "rungs": [
-        "R2"
-      ],
-      "max_rung": "R2",
-      "global_pareto": true,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R2": 2
+      "aa": {
+        "slug": "gemini-4-hydrogen-high",
+        "name": "Gemini 4 Hydrogen (High)",
+        "index": 50.8,
+        "input": 1.5,
+        "output": 7.5,
+        "cache_hit": null,
+        "task": 1.8733,
+        "tps": 222,
+        "ttft": 18.79,
+        "output_tokens": 249773,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "gemini-4-hydrogen-high",
-        "aa_name": "Gemini 4 Hydrogen (High)",
-        "intelligence_index": 50.8,
-        "task_cost_usd": 1.8733,
-        "blended_price_per_1m": 3,
-        "output_tps": 222,
-        "ttft_s": 18.79
+      "metrics": {
+        "artificial_analysis_intelligence_index": 50.8
       }
     },
     {
-      "id": "claudeAgent:claude-opus-5-5:high",
-      "provider": "claudeAgent",
-      "family": "claude",
-      "model": "claude-opus-5-5",
-      "options": {
-        "effort": "high"
-      },
-      "primary_rung": "R2",
-      "rungs": [
-        "R2"
-      ],
-      "max_rung": "R2",
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R2": 3
-      },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "claude-opus-5-5-high",
-        "aa_name": "Claude Opus 5.5 (High, Default Fallback)",
-        "intelligence_index": 51.8,
-        "task_cost_usd": 3.4647,
-        "blended_price_per_1m": 8,
-        "output_tps": 83,
-        "ttft_s": 47.05
-      }
-    },
-    {
-      "id": "antigravity:gemini-4-neon:xhigh",
+      "id": "antigravity:gemini-4-hydrogen:xhigh",
       "provider": "antigravity",
       "family": "gemini",
-      "model": "gemini-4-neon",
+      "model": "gemini-4-hydrogen",
+      "effort": "xhigh",
       "options": {
         "thought_level": "xhigh"
       },
-      "primary_rung": "R3",
-      "rungs": [
-        "R3"
-      ],
-      "max_rung": "R3",
-      "global_pareto": true,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R3": 1
+      "aa": {
+        "slug": "gemini-4-hydrogen",
+        "name": "Gemini 4 Hydrogen (Xhigh)",
+        "index": 53.9,
+        "input": 1.5,
+        "output": 7.5,
+        "cache_hit": null,
+        "task": 3.1602,
+        "tps": 222,
+        "ttft": 73.03,
+        "output_tokens": 421360,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "gemini-4-neon",
-        "aa_name": "Gemini 4 Neon (Xhigh)",
-        "intelligence_index": 61.4,
-        "task_cost_usd": 6.4448,
-        "blended_price_per_1m": 6,
-        "output_tps": 120,
-        "ttft_s": 110.93
+      "metrics": {
+        "artificial_analysis_intelligence_index": 53.9
+      }
+    },
+    {
+      "id": "antigravity:gemini-4-neon:low",
+      "provider": "antigravity",
+      "family": "gemini",
+      "model": "gemini-4-neon",
+      "effort": "low",
+      "options": {
+        "thought_level": "low"
+      },
+      "aa": {
+        "slug": "gemini-4-neon-low",
+        "name": "Gemini 4 Neon (Low)",
+        "index": 44.1,
+        "input": 3,
+        "output": 15,
+        "cache_hit": null,
+        "task": 0.7452,
+        "tps": 122,
+        "ttft": 18.71,
+        "output_tokens": 49680,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 44.1
+      }
+    },
+    {
+      "id": "antigravity:gemini-4-neon:medium",
+      "provider": "antigravity",
+      "family": "gemini",
+      "model": "gemini-4-neon",
+      "effort": "medium",
+      "options": {
+        "thought_level": "medium"
+      },
+      "aa": {
+        "slug": "gemini-4-neon-medium",
+        "name": "Gemini 4 Neon (Medium)",
+        "index": 54.9,
+        "input": 3,
+        "output": 15,
+        "cache_hit": null,
+        "task": 1.9046,
+        "tps": 117,
+        "ttft": 30.87,
+        "output_tokens": 126973,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 54.9
       }
     },
     {
@@ -515,28 +352,389 @@
       "provider": "antigravity",
       "family": "gemini",
       "model": "gemini-4-neon",
+      "effort": "high",
       "options": {
         "thought_level": "high"
       },
-      "primary_rung": "R3",
-      "rungs": [
-        "R3"
-      ],
-      "max_rung": "R3",
-      "global_pareto": true,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R3": 2
+      "aa": {
+        "slug": "gemini-4-neon-high",
+        "name": "Gemini 4 Neon (High)",
+        "index": 59.6,
+        "input": 3,
+        "output": 15,
+        "cache_hit": null,
+        "task": 3.7427,
+        "tps": 116,
+        "ttft": 33.08,
+        "output_tokens": 249513,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "gemini-4-neon-high",
-        "aa_name": "Gemini 4 Neon (High)",
-        "intelligence_index": 59.6,
-        "task_cost_usd": 3.7427,
-        "blended_price_per_1m": 6,
-        "output_tps": 116,
-        "ttft_s": 33.08
+      "metrics": {
+        "artificial_analysis_intelligence_index": 59.6
+      }
+    },
+    {
+      "id": "antigravity:gemini-4-neon:xhigh",
+      "provider": "antigravity",
+      "family": "gemini",
+      "model": "gemini-4-neon",
+      "effort": "xhigh",
+      "options": {
+        "thought_level": "xhigh"
+      },
+      "aa": {
+        "slug": "gemini-4-neon",
+        "name": "Gemini 4 Neon (Xhigh)",
+        "index": 61.4,
+        "input": 3,
+        "output": 15,
+        "cache_hit": null,
+        "task": 6.4448,
+        "tps": 120,
+        "ttft": 110.93,
+        "output_tokens": 429653,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 61.4
+      }
+    },
+    {
+      "id": "claudeAgent:claude-fable-5-2:low",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-fable-5-2",
+      "effort": "low",
+      "options": {
+        "effort": "low"
+      },
+      "aa": {
+        "slug": "claude-fable-5-2-low",
+        "name": "Claude Fable 5.2 (Low, Default Fallback)",
+        "index": 53.9,
+        "input": 8,
+        "output": 40,
+        "cache_hit": null,
+        "task": 3.0972,
+        "tps": 85,
+        "ttft": 7.24,
+        "output_tokens": 77430,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 53.9
+      }
+    },
+    {
+      "id": "claudeAgent:claude-fable-5-2:medium",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-fable-5-2",
+      "effort": "medium",
+      "options": {
+        "effort": "medium"
+      },
+      "aa": {
+        "slug": "claude-fable-5-2-medium",
+        "name": "Claude Fable 5.2 (Medium, Default Fallback)",
+        "index": 56.4,
+        "input": 8,
+        "output": 40,
+        "cache_hit": null,
+        "task": 3.8026,
+        "tps": 84,
+        "ttft": 11.03,
+        "output_tokens": 95065,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 56.4
+      }
+    },
+    {
+      "id": "claudeAgent:claude-fable-5-2:high",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-fable-5-2",
+      "effort": "high",
+      "options": {
+        "effort": "high"
+      },
+      "aa": {
+        "slug": "claude-fable-5-2-high",
+        "name": "Claude Fable 5.2 (High, Default Fallback)",
+        "index": 61.8,
+        "input": 8,
+        "output": 40,
+        "cache_hit": null,
+        "task": 9.0784,
+        "tps": 86,
+        "ttft": 37.7,
+        "output_tokens": 226960,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 61.8
+      }
+    },
+    {
+      "id": "claudeAgent:claude-fable-5-2:xhigh",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-fable-5-2",
+      "effort": "xhigh",
+      "options": {
+        "effort": "xhigh"
+      },
+      "aa": {
+        "slug": "claude-fable-5-2-xhigh",
+        "name": "Claude Fable 5.2 (Xhigh, Default Fallback)",
+        "index": 62.2,
+        "input": 8,
+        "output": 40,
+        "cache_hit": null,
+        "task": 14.8286,
+        "tps": 86,
+        "ttft": 120.45,
+        "output_tokens": 370715,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 62.2
+      }
+    },
+    {
+      "id": "claudeAgent:claude-fable-5-2:max",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-fable-5-2",
+      "effort": "max",
+      "options": {
+        "effort": "max"
+      },
+      "aa": {
+        "slug": "claude-fable-5-2",
+        "name": "Claude Fable 5.2 (Max, Default Fallback)",
+        "index": 64.6,
+        "input": 8,
+        "output": 40,
+        "cache_hit": null,
+        "task": 26.5386,
+        "tps": 90,
+        "ttft": 124.57,
+        "output_tokens": 663465,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 64.6
+      }
+    },
+    {
+      "id": "claudeAgent:claude-haiku-5-5:low",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-haiku-5-5",
+      "effort": "low",
+      "options": {
+        "effort": "low"
+      },
+      "aa": {
+        "slug": "claude-haiku-5-5-low",
+        "name": "Claude Haiku 5.5 (Low)",
+        "index": 18.6,
+        "input": 0.1,
+        "output": 0.5,
+        "cache_hit": null,
+        "task": 0.0438,
+        "tps": 171,
+        "ttft": 7.97,
+        "output_tokens": 87600,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 18.6
+      }
+    },
+    {
+      "id": "claudeAgent:claude-haiku-5-5:medium",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-haiku-5-5",
+      "effort": "medium",
+      "options": {
+        "effort": "medium"
+      },
+      "aa": {
+        "slug": "claude-haiku-5-5-medium",
+        "name": "Claude Haiku 5.5 (Medium)",
+        "index": 24.6,
+        "input": 0.1,
+        "output": 0.5,
+        "cache_hit": null,
+        "task": 0.0918,
+        "tps": 175,
+        "ttft": 12.66,
+        "output_tokens": 183600,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 24.6
+      }
+    },
+    {
+      "id": "claudeAgent:claude-haiku-5-5:high",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-haiku-5-5",
+      "effort": "high",
+      "options": {
+        "effort": "high"
+      },
+      "aa": {
+        "slug": "claude-haiku-5-5-high",
+        "name": "Claude Haiku 5.5 (High)",
+        "index": 29.9,
+        "input": 0.1,
+        "output": 0.5,
+        "cache_hit": null,
+        "task": 0.1586,
+        "tps": 178,
+        "ttft": 20,
+        "output_tokens": 317200,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 29.9
+      }
+    },
+    {
+      "id": "claudeAgent:claude-haiku-5-5:xhigh",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-haiku-5-5",
+      "effort": "xhigh",
+      "options": {
+        "effort": "xhigh"
+      },
+      "aa": {
+        "slug": "claude-haiku-5-5-xhigh",
+        "name": "Claude Haiku 5.5 (Xhigh)",
+        "index": 34.6,
+        "input": 0.1,
+        "output": 0.5,
+        "cache_hit": null,
+        "task": 0.2484,
+        "tps": 178,
+        "ttft": 72.88,
+        "output_tokens": 496800,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 34.6
+      }
+    },
+    {
+      "id": "claudeAgent:claude-haiku-5-5:max",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-haiku-5-5",
+      "effort": "max",
+      "options": {
+        "effort": "max"
+      },
+      "aa": {
+        "slug": "claude-haiku-5-5",
+        "name": "Claude Haiku 5.5 (Max)",
+        "index": 36.5,
+        "input": 0.1,
+        "output": 0.5,
+        "cache_hit": null,
+        "task": 0.411,
+        "tps": 231,
+        "ttft": 355.59,
+        "output_tokens": 822000,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 36.5
+      }
+    },
+    {
+      "id": "claudeAgent:claude-opus-5-5:low",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "low",
+      "options": {
+        "effort": "low"
+      },
+      "aa": {
+        "slug": "claude-opus-5-5-low",
+        "name": "Claude Opus 5.5 (Low, Default Fallback)",
+        "index": 34.8,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 0.9755,
+        "tps": 78,
+        "ttft": 5.83,
+        "output_tokens": 48775,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 34.8
+      }
+    },
+    {
+      "id": "claudeAgent:claude-opus-5-5:medium",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "medium",
+      "options": {
+        "effort": "medium"
+      },
+      "aa": {
+        "slug": "claude-opus-5-5-medium",
+        "name": "Claude Opus 5.5 (Medium, Default Fallback)",
+        "index": 48.2,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 2.4511,
+        "tps": 81,
+        "ttft": 24.7,
+        "output_tokens": 122555,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 48.2
+      }
+    },
+    {
+      "id": "claudeAgent:claude-opus-5-5:high",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "options": {
+        "effort": "high"
+      },
+      "aa": {
+        "slug": "claude-opus-5-5-high",
+        "name": "Claude Opus 5.5 (High, Default Fallback)",
+        "index": 51.8,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 3.4647,
+        "tps": 83,
+        "ttft": 47.05,
+        "output_tokens": 173235,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 51.8
       }
     },
     {
@@ -544,32 +742,264 @@
       "provider": "claudeAgent",
       "family": "claude",
       "model": "claude-opus-5-5",
+      "effort": "xhigh",
       "options": {
         "effort": "xhigh"
       },
-      "primary_rung": "R3",
-      "rungs": [
-        "R3"
-      ],
-      "max_rung": "R3",
-      "global_pareto": false,
-      "provider_pareto": true,
-      "rung_ranks": {
-        "R3": 3
+      "aa": {
+        "slug": "claude-opus-5-5-xhigh",
+        "name": "Claude Opus 5.5 (Xhigh, Default Fallback)",
+        "index": 57.4,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 6.0472,
+        "tps": 78,
+        "ttft": 133.95,
+        "output_tokens": 302360,
+        "output_tokens_measured": false
       },
-      "benchmarks": {
-        "source": "artificial_analysis_mirror",
-        "aa_slug": "claude-opus-5-5-xhigh",
-        "aa_name": "Claude Opus 5.5 (Xhigh, Default Fallback)",
-        "intelligence_index": 57.4,
-        "task_cost_usd": 6.0472,
-        "blended_price_per_1m": 8,
-        "output_tps": 78,
-        "ttft_s": 133.95
+      "metrics": {
+        "artificial_analysis_intelligence_index": 57.4
+      }
+    },
+    {
+      "id": "claudeAgent:claude-opus-5-5:max",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-opus-5-5",
+      "effort": "max",
+      "options": {
+        "effort": "max"
+      },
+      "aa": {
+        "slug": "claude-opus-5-5",
+        "name": "Claude Opus 5.5 (Max, Default Fallback)",
+        "index": 59.1,
+        "input": 4,
+        "output": 20,
+        "cache_hit": null,
+        "task": 10.0364,
+        "tps": 97,
+        "ttft": 738.74,
+        "output_tokens": 501820,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 59.1
+      }
+    },
+    {
+      "id": "claudeAgent:claude-sonnet-5-5:low",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "low",
+      "options": {
+        "effort": "low"
+      },
+      "aa": {
+        "slug": "claude-sonnet-5-5-low",
+        "name": "Claude Sonnet 5.5 (Low, Default Fallback)",
+        "index": 25.6,
+        "input": 2,
+        "output": 10,
+        "cache_hit": null,
+        "task": 0.5113,
+        "tps": 102,
+        "ttft": 1.39,
+        "output_tokens": 51130,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 25.6
+      }
+    },
+    {
+      "id": "claudeAgent:claude-sonnet-5-5:medium",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "medium",
+      "options": {
+        "effort": "medium"
+      },
+      "aa": {
+        "slug": "claude-sonnet-5-5-medium",
+        "name": "Claude Sonnet 5.5 (Medium, Default Fallback)",
+        "index": 30.8,
+        "input": 2,
+        "output": 10,
+        "cache_hit": null,
+        "task": 0.7807,
+        "tps": 104,
+        "ttft": 5.73,
+        "output_tokens": 78070,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 30.8
+      }
+    },
+    {
+      "id": "claudeAgent:claude-sonnet-5-5:high",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "options": {
+        "effort": "high"
+      },
+      "aa": {
+        "slug": "claude-sonnet-5-5-high",
+        "name": "Claude Sonnet 5.5 (High, Default Fallback)",
+        "index": 41.5,
+        "input": 2,
+        "output": 10,
+        "cache_hit": null,
+        "task": 1.6361,
+        "tps": 114,
+        "ttft": 11.73,
+        "output_tokens": 163610,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 41.5
+      }
+    },
+    {
+      "id": "claudeAgent:claude-sonnet-5-5:xhigh",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "xhigh",
+      "options": {
+        "effort": "xhigh"
+      },
+      "aa": {
+        "slug": "claude-sonnet-5-5-xhigh",
+        "name": "Claude Sonnet 5.5 (Xhigh, Default Fallback)",
+        "index": 49.9,
+        "input": 2,
+        "output": 10,
+        "cache_hit": null,
+        "task": 4.092,
+        "tps": 116,
+        "ttft": 38.88,
+        "output_tokens": 409200,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 49.9
+      }
+    },
+    {
+      "id": "claudeAgent:claude-sonnet-5-5:max",
+      "provider": "claudeAgent",
+      "family": "claude",
+      "model": "claude-sonnet-5-5",
+      "effort": "max",
+      "options": {
+        "effort": "max"
+      },
+      "aa": {
+        "slug": "claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5 (Max, Default Fallback)",
+        "index": 54.5,
+        "input": 2,
+        "output": 10,
+        "cache_hit": null,
+        "task": 10.0206,
+        "tps": 134,
+        "ttft": 453.77,
+        "output_tokens": 1002060,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 54.5
+      }
+    },
+    {
+      "id": "cursor:grok-4.7:low",
+      "provider": "cursor",
+      "family": "grok",
+      "model": "grok-4.7",
+      "effort": "low",
+      "options": {
+        "reasoning_effort": "low"
+      },
+      "aa": {
+        "slug": "grok-4-7-low",
+        "name": "Grok 4.7 (Low)",
+        "index": 31.1,
+        "input": 2,
+        "output": 6,
+        "cache_hit": null,
+        "task": 2.9222,
+        "tps": 68,
+        "ttft": 6.08,
+        "output_tokens": 487033,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 31.1
+      }
+    },
+    {
+      "id": "cursor:grok-4.7:high",
+      "provider": "cursor",
+      "family": "grok",
+      "model": "grok-4.7",
+      "effort": "high",
+      "options": {
+        "reasoning_effort": "high"
+      },
+      "aa": {
+        "slug": "grok-4-7-high",
+        "name": "Grok 4.7 (High)",
+        "index": 35.2,
+        "input": 2,
+        "output": 6,
+        "cache_hit": null,
+        "task": 6.1836,
+        "tps": 72,
+        "ttft": 29.59,
+        "output_tokens": 1030600,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 35.2
+      }
+    },
+    {
+      "id": "cursor:grok-4.7:xhigh",
+      "provider": "cursor",
+      "family": "grok",
+      "model": "grok-4.7",
+      "effort": "xhigh",
+      "options": {
+        "reasoning_effort": "xhigh"
+      },
+      "aa": {
+        "slug": "grok-4-7",
+        "name": "Grok 4.7 (Xhigh)",
+        "index": 35.5,
+        "input": 2,
+        "output": 6,
+        "cache_hit": null,
+        "task": 7.7715,
+        "tps": 88,
+        "ttft": 49.88,
+        "output_tokens": 1295250,
+        "output_tokens_measured": false
+      },
+      "metrics": {
+        "artificial_analysis_intelligence_index": 35.5
       }
     }
   ],
   "tracked_models": [
+    "claude-fable-5-2",
     "claude-haiku-5-5",
     "claude-opus-5-5",
     "claude-sonnet-5-5",
