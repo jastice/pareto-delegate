@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-11-24T00:00:00Z",
+  "providers": {
+    "cursor": {
+      "state": "normal",
+      "resets_at": null,
+      "notes": "Default pure-API / balanced state. Copy to quota.local.json and set 'surplus' if you have unused subscription headroom."
+    },
+    "claudeAgent": {
+      "state": "normal",
+      "resets_at": null,
+      "notes": "Default balanced state. Override in quota.local.json (e.g. 'scarce' with reserve_for_min_rung) as weekly limits tighten."
+    },
+    "antigravity": {
+      "state": "normal",
+      "resets_at": null,
+      "notes": "Default balanced state."
+    },
+    "codex": {
+      "state": "normal",
+      "resets_at": null,
+      "notes": "Default balanced state."
+    }
+  }
+}

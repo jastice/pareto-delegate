@@ -1,0 +1,90 @@
+diff --git a/src/webhook-auth.ts b/src/webhook-auth.ts
+new file mode 100644
+index 0000000..a1b2c3d
+--- /dev/null
++++ b/src/webhook-auth.ts
+@@ -0,0 +1,86 @@
++import { createHmac } from "node:crypto";
++
++export interface WebhookHeaders {
++  readonly "x-webhook-signature"?: string;
++  readonly "x-webhook-timestamp"?: string;
++  readonly "x-request-id"?: string;
++}
++
++export interface VerifyOptions {
++  readonly secret: string;
++  readonly maxSkewSeconds?: number;
++  readonly nowSeconds?: () => number;
++}
++
++export interface VerifyResult {
++  readonly ok: boolean;
++  readonly reason?: string;
++}
++
++/**
++ * Verifies incoming HMAC-SHA256 webhook requests with timestamp freshness
++ * and in-memory replay protection.
++ */
++export class WebhookVerifier {
++  private readonly secret: string;
++  private readonly maxSkewSeconds: number;
++  private readonly nowSeconds: () => number;
++  private readonly seenRequests = new Map<string, number>();
++
++  constructor(options: VerifyOptions) {
++    this.secret = options.secret;
++    this.maxSkewSeconds = options.maxSkewSeconds ?? 300;
++    this.nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
++  }
++
++  private prune(now: number): void {
++    for (const [id, expiresAt] of this.seenRequests) {
++      if (expiresAt <= now) {
++        this.seenRequests.delete(id);
++      }
++    }
++  }
++
++  verify(rawBody: string, headers: WebhookHeaders): VerifyResult {
++    const sigHeader = headers["x-webhook-signature"];
++    const tsHeader = headers["x-webhook-timestamp"];
++    const reqId = headers["x-request-id"];
++
++    if (!sigHeader || !tsHeader) {
++      return { ok: false, reason: "missing_headers" };
++    }
++
++    const ts = Number(tsHeader);
++    if (!Number.isFinite(ts)) {
++      return { ok: false, reason: "invalid_timestamp" };
++    }
++
++    const now = this.nowSeconds();
++    this.prune(now);
++
++    // Reject expired webhooks older than maxSkewSeconds
++    if (now - ts > this.maxSkewSeconds) {
++      return { ok: false, reason: "timestamp_expired" };
++    }
++
++    const signedPayload = `${tsHeader}.${rawBody}`;
++    const expected = `sha256=${createHmac("sha256", this.secret)
++      .update(signedPayload)
++      .digest("hex")}`;
++
++    if (sigHeader !== expected) {
++      return { ok: false, reason: "invalid_signature" };
++    }
++
++    // Replay protection
++    const replayKey = reqId ?? expected;
++    if (this.seenRequests.has(replayKey)) {
++      return { ok: false, reason: "replay_detected" };
++    }
++    this.seenRequests.set(replayKey, ts + this.maxSkewSeconds);
++
++    return { ok: true };
++  }
++}

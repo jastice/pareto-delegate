@@ -1,0 +1,19 @@
+{
+  "name": "pareto-delegate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "bun run scripts/sync-benchmarks.ts",
+    "route": "bun run scripts/route.ts",
+    "test": "bun test scripts",
+    "eval:sim": "bun run evals/simulate.ts",
+    "eval:setup": "bun run evals/canary/setup.ts",
+    "eval:grade": "bun run evals/canary/grade.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.0"
+  }
+}
