@@ -6,12 +6,20 @@
  *
  * Library use: selectRoute(...). Table: --table [--write] regenerates routes.md.
  */
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PATHS, loadFrontier, loadOverrides, loadQuota, loadRoles } from "./config.ts";
+import {
+  PATHS,
+  loadFrontier,
+  loadObservationCounts,
+  loadOverrides,
+  loadQuota,
+  loadRoles,
+} from "./config.ts";
 import {
   adjustFloor,
+  agenticAnchors,
   estimateAttempt,
   floorValue,
   maxTtft,
@@ -61,6 +69,9 @@ export interface RouteRequest {
   readonly background?: boolean;
   /** Apply verifiability/blast-radius floor shifts (default true). */
   readonly adjust_floor?: boolean;
+  /** Sample among near-optimal candidates (roles.defaults.exploration). Library default: off. */
+  readonly explore?: boolean;
+  readonly rng?: () => number;
   readonly now?: Date;
 }
 
@@ -73,6 +84,7 @@ export interface Candidate {
   readonly effective_cost_usd: number;
   readonly time_s: number;
   readonly expected_cost: number;
+  readonly cost_basis: "agentic" | "profile";
   readonly quota_state: QuotaState;
   readonly reserved: boolean;
 }
@@ -83,6 +95,10 @@ export interface RouteResult {
   readonly floor: Floor;
   readonly floor_quality: number;
   readonly winner: Candidate | null;
+  /** Expected-cost minimum; differs from winner when exploration picked a neighbour. */
+  readonly best: Candidate | null;
+  readonly explored: boolean;
+  readonly explore_pool: ReadonlyArray<{ readonly id: string; readonly probability: number }>;
   readonly fallbacks: readonly Candidate[];
   readonly ranked: readonly Candidate[];
   readonly rejected: Readonly<Record<string, number>>;
@@ -94,6 +110,8 @@ export interface RouteContext {
   readonly roles: RolesFile;
   readonly overrides: OverridesFile;
   readonly quota: QuotaFile;
+  /** Logged outcomes per "provider:model|role" (exploration novelty). */
+  readonly observations?: ReadonlyMap<string, number>;
 }
 
 function quotaFor(
@@ -148,6 +166,7 @@ export function selectRoute(ctx: RouteContext, req: RouteRequest): RouteResult {
   const throttled = req.throttled ?? [];
   const excluded = new Set(req.exclude ?? []);
   const latencyFactor = req.background ? roles.defaults.background_latency_factor : 1;
+  const anchors = agenticAnchors(frontier, role, roles);
 
   const rejected: Record<string, number> = {};
   const reject = (why: string): void => {
@@ -192,7 +211,7 @@ export function selectRoute(ctx: RouteContext, req: RouteRequest): RouteResult {
 
     const bias = ov.quality_bias(roleName);
     const quality = roleQuality(entry, role).quality + bias;
-    const est = estimateAttempt(entry, role, roles, frontier);
+    const est = estimateAttempt(entry, role, roles, frontier, anchors);
     const pPass = passProbability(quality, floorQ, pAt, scale);
     const mult = roles.quota_cost_multipliers[q.state] * ov.cost_multiplier;
     const effectiveCost = est.token_cost_usd * mult;
@@ -212,6 +231,7 @@ export function selectRoute(ctx: RouteContext, req: RouteRequest): RouteResult {
       effective_cost_usd: effectiveCost,
       time_s: est.time_s,
       expected_cost: expected,
+      cost_basis: est.basis,
       quota_state: q.state,
       reserved: q.state === "scarce" && FLOOR_ORDER[floor] < FLOOR_ORDER[q.reserve],
     };
@@ -235,10 +255,41 @@ export function selectRoute(ctx: RouteContext, req: RouteRequest): RouteResult {
   const ranked = [...pool].sort(
     (a, b) => a.expected_cost - b.expected_cost || a.effective_cost_usd - b.effective_cost_usd,
   );
-  const winner = ranked[0] ?? null;
+  const best = ranked[0] ?? null;
+  let winner = best;
+  let explorePool: Array<{ id: string; probability: number }> = [];
+  const cfg = roles.defaults.exploration;
+  if (best && req.explore && cfg.enabled) {
+    const eb = Math.max(best.expected_cost, 1e-6);
+    const pool = ranked.filter((c) => c.expected_cost <= eb * (1 + cfg.band));
+    if (pool.length > 1) {
+      const weights = pool.map((c) => {
+        const n = ctx.observations?.get(`${c.entry.provider}:${c.entry.model}|${roleName}`) ?? 0;
+        const closeness = Math.exp(-(c.expected_cost - eb) / (Math.max(cfg.temperature, 1e-6) * eb));
+        return closeness * (1 + cfg.novelty_bonus / (1 + n));
+      });
+      const total = weights.reduce((s, w) => s + w, 0);
+      explorePool = pool.map((c, i) => ({ id: c.entry.id, probability: (weights[i] ?? 0) / total }));
+      let u = (req.rng ?? Math.random)() * total;
+      for (let i = 0; i < pool.length; i += 1) {
+        u -= weights[i] ?? 0;
+        if (u <= 0) {
+          winner = pool[i] ?? best;
+          break;
+        }
+      }
+    }
+  }
+  const explored = winner !== best;
+
   const fallbacks: Candidate[] = [];
   const seenModels = new Set<string>(winner ? [`${winner.entry.provider}:${winner.entry.model}`] : []);
-  for (const c of ranked.slice(1)) {
+  if (explored && best) {
+    fallbacks.push(best);
+    seenModels.add(`${best.entry.provider}:${best.entry.model}`);
+  }
+  for (const c of ranked) {
+    if (c === winner) continue;
     const key = `${c.entry.provider}:${c.entry.model}`;
     if (seenModels.has(key)) continue;
     seenModels.add(key);
@@ -252,6 +303,9 @@ export function selectRoute(ctx: RouteContext, req: RouteRequest): RouteResult {
     floor,
     floor_quality: floorQ,
     winner,
+    best,
+    explored,
+    explore_pool: explorePool,
     fallbacks,
     ranked,
     rejected,
@@ -288,6 +342,7 @@ function candidateSummary(c: Candidate): Record<string, unknown> {
     time_s: Math.round(c.time_s),
     quality: r2(c.quality),
     quota: c.quota_state,
+    basis: c.cost_basis,
   };
 }
 
@@ -324,6 +379,9 @@ export function decisionJson(
     },
     ...(hint ? { harness: hint } : {}),
     est: candidateSummary(w),
+    ...(res.explored && res.best
+      ? { explored: true, best: candidateSummary(res.best) }
+      : {}),
     fallbacks: res.fallbacks.map((c) => ({
       id: c.entry.id,
       p_pass: r2(c.p_pass),
@@ -339,12 +397,20 @@ export function decisionJson(
       entry_id: w.entry.id,
       quota_state: w.quota_state,
       p_pass_est: r2(w.p_pass),
+      quality_bias: w.quality_bias,
       cost_est_usd: r3(w.token_cost_usd),
       passed_first_try: "<bool>",
+      ...(res.explored ? { explored: true } : {}),
       escalated_to: null,
       duration_s: "<int>",
     },
-    ...(explain ? { ranked: res.ranked.slice(0, 10).map(candidateSummary), rejected: res.rejected } : {}),
+    ...(explain
+      ? {
+          ranked: res.ranked.slice(0, 10).map(candidateSummary),
+          explore_pool: res.explore_pool.map((p) => ({ id: p.id, probability: r2(p.probability) })),
+          rejected: res.rejected,
+        }
+      : {}),
   };
 }
 
@@ -354,7 +420,7 @@ export function renderTable(ctx: RouteContext): string {
   lines.push("# pareto-delegate routes (generated)");
   lines.push("");
   lines.push(
-    "Fallback for when `scripts/route.ts` cannot be run. Prefer the CLI: it applies live models, session throttling, author family and verifiability adjustments. Floors already include no verifiability shift here. Regenerate: `bun run scripts/route.ts --table --write`.",
+    "Fallback for when `scripts/route.ts` cannot be run. Prefer the CLI: it applies live models, session throttling, author family and verifiability adjustments. Floors already include no verifiability shift here. Regenerate: `bun run scripts/route.ts --table --write`. Exploration is off in this table.",
   );
   lines.push("");
   const quotaDesc = providers
@@ -391,6 +457,16 @@ export function renderTable(ctx: RouteContext): string {
 // CLI
 // ---------------------------------------------------------------------------
 
+export function seededRng(seed: number): () => number {
+  let state = (Number.isFinite(seed) ? seed : 0) >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function parseList(v: string): string[] {
   return v
     .split(",")
@@ -424,6 +500,8 @@ const USAGE = `Usage: bun run scripts/route.ts --category <cat> --floor <R0..R3>
   --exclude id,...        Entry ids to skip (e.g. the attempt that just failed)
   --background            Async sidecar nobody waits on: latency weighted by background_latency_factor
   --no-adjust             Do not shift the floor for verifiability/blast radius
+  --no-explore            Always take the expected-cost minimum (no exploration jitter)
+  --seed <n>              Deterministic exploration sampling
   --explain               Include top-10 ranking and rejection counts
   --table [--write]       Print (or write routes.md) the role x floor summary table
 
@@ -438,7 +516,7 @@ function main(argv: readonly string[]): number {
     const eq = a.indexOf("=");
     if (eq > 0) {
       args.set(a.slice(2, eq), a.slice(eq + 1));
-    } else if (["--explain", "--table", "--write", "--no-adjust", "--background", "--help"].includes(a)) {
+    } else if (["--explain", "--table", "--write", "--no-adjust", "--background", "--no-explore", "--help"].includes(a)) {
       flags.add(a.slice(2));
     } else {
       const v = argv[i + 1];
@@ -457,13 +535,15 @@ function main(argv: readonly string[]): number {
     roles: loadRoles(),
     overrides: loadOverrides(),
     quota: loadQuota(),
+    observations: loadObservationCounts(),
   };
 
   if (flags.has("table")) {
     const table = renderTable(ctx);
     if (flags.has("write")) {
-      writeFileSync(PATHS.routesTable, table, "utf8");
-      console.log(`Wrote ${PATHS.routesTable}`);
+      const out = existsSync(PATHS.frontierLocal) ? PATHS.routesTableLocal : PATHS.routesTable;
+      writeFileSync(out, table, "utf8");
+      console.log(`Wrote ${out}`);
     } else {
       console.log(table);
     }
@@ -498,6 +578,8 @@ function main(argv: readonly string[]): number {
     ...(exc ? { exclude: parseList(exc) } : {}),
     ...(flags.has("no-adjust") ? { adjust_floor: false } : {}),
     ...(flags.has("background") ? { background: true } : {}),
+    explore: !flags.has("no-explore"),
+    ...(args.get("seed") !== undefined ? { rng: seededRng(Number(args.get("seed"))) } : {}),
   };
   const res = selectRoute(ctx, req);
   console.log(JSON.stringify(decisionJson(res, req, flags.has("explain")), null, 2));

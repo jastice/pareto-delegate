@@ -1,10 +1,11 @@
+
+*.local
+*.local.json
+*.local.md
 .DS_Store
+evals/canary/work/
 node_modules/
 outcomes.jsonl
-quota.local.json
 overrides.local.json
-evals/canary/work/
-
-
-
+quota.local.json
 roles.local.json

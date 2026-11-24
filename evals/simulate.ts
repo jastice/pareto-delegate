@@ -4,13 +4,15 @@
  * performance deviates from the AA-derived role quality — and checks that:
  *   1. the uncalibrated router pays for the mismatch,
  *   2. scripts/calibrate.ts recovers the bias from outcomes alone,
- *   3. routing with the recovered quality_bias closes most of the gap.
+ *   3. routing with the recovered quality_bias closes most of the gap,
+ *   4. exploration jitter during learning widens what gets calibrated (models the deterministic
+ *      router never picks keep their prior otherwise).
  *
  *   bun run evals/simulate.ts [--n 3000] [--truth claude=4,gemini=-4,grok=-3] [--providers a,b]
  */
 import { loadFrontier, loadOverrides, loadQuota, loadRoles } from "../scripts/config.ts";
 import { passProbability } from "../scripts/model.ts";
-import { selectRoute, type Candidate, type RouteContext, type RouteRequest } from "../scripts/route.ts";
+import { seededRng, selectRoute, type Candidate, type RouteContext, type RouteRequest } from "../scripts/route.ts";
 import { summarize, type Row } from "../scripts/calibrate.ts";
 import {
   FLOORS,
@@ -72,8 +74,18 @@ interface Metrics {
   rows: Row[];
 }
 
-function run(ctx: RouteContext, tasks: readonly Task[], truth: Record<string, number>, seed: number, providers?: string[]): Metrics {
+function run(
+  baseCtx: RouteContext,
+  tasks: readonly Task[],
+  truth: Record<string, number>,
+  seed: number,
+  providers?: string[],
+  explore = false,
+): Metrics {
   const rand = rng(seed);
+  const pick = seededRng(seed * 7919);
+  const observations = new Map<string, number>();
+  const ctx: RouteContext = { ...baseCtx, observations };
   const m: Metrics = { first_pass: 0, final_pass: 0, cost: 0, failure_cost: 0, minutes: 0, shares: {}, rows: [] };
   const truePass = (c: Candidate, res: { role: string; floor_quality: number }): number => {
     const role = ctx.roles.roles[res.role];
@@ -86,14 +98,23 @@ function run(ctx: RouteContext, tasks: readonly Task[], truth: Record<string, nu
 
   for (const task of tasks) {
     const req: RouteRequest = { ...task, ...(providers ? { providers } : {}) };
-    const res = selectRoute(ctx, req);
+    const res = selectRoute(ctx, { ...req, explore, rng: pick });
     const c = res.winner;
     if (!c) continue;
+    const obsKey = `${c.entry.provider}:${c.entry.model}|${res.role}`;
+    observations.set(obsKey, (observations.get(obsKey) ?? 0) + 1);
     m.cost += c.token_cost_usd;
     m.minutes += c.time_s / 60;
     m.shares[c.entry.provider] = (m.shares[c.entry.provider] ?? 0) + 1;
     const passed = rand() < truePass(c, res);
-    m.rows.push({ entry_id: c.entry.id, model_key: `${c.entry.provider}:${c.entry.model}`, role: res.role, p: c.p_pass, passed });
+    m.rows.push({
+      entry_id: c.entry.id,
+      model_key: `${c.entry.provider}:${c.entry.model}`,
+      role: res.role,
+      p: c.p_pass,
+      bias: c.quality_bias,
+      passed,
+    });
     if (passed) {
       m.first_pass += 1;
       m.final_pass += 1;
@@ -134,19 +155,46 @@ function main(): void {
     quota: loadQuota(),
   };
 
-  const before = run(base, tasks, truth, 1, providers);
-  const stats = summarize(before.rows, 5, (role) => base.roles.roles[role]?.logistic_scale ?? base.roles.defaults.logistic_scale);
+  const scaleFor = (role: string): number =>
+    base.roles.roles[role]?.logistic_scale ?? base.roles.defaults.logistic_scale;
+  const learn = (m: Metrics): { ctx: RouteContext; stats: ReturnType<typeof summarize> } => {
+    const stats = summarize(m.rows, 4, scaleFor);
+    const learned: Record<string, EntryOverride> = { ...(base.overrides.overrides ?? {}) };
+    for (const s of stats) {
+      if (s.n < 5) continue;
+      const prev = learned[s.key] ?? {};
+      const qb = typeof prev.quality_bias === "object" ? { ...prev.quality_bias } : {};
+      qb[s.role] = Math.round(s.implied_bias * 10) / 10;
+      learned[s.key] = { ...prev, quality_bias: qb };
+    }
+    return { ctx: { ...base, overrides: { ...base.overrides, overrides: learned } }, stats };
+  };
 
-  const learned: Record<string, EntryOverride> = { ...(base.overrides.overrides ?? {}) };
-  for (const s of stats) {
-    if (s.n < 5) continue;
-    const prev = learned[s.key] ?? {};
-    const qb = typeof prev.quality_bias === "object" ? { ...prev.quality_bias } : {};
-    qb[s.role] = Math.round(s.implied_bias * 10) / 10;
-    learned[s.key] = { ...prev, quality_bias: qb };
-  }
-  const calibrated: RouteContext = { ...base, overrides: { ...base.overrides, overrides: learned } };
-  const after = run(calibrated, tasks, truth, 2, providers);
+  // Online learning: route a batch, recalibrate on all outcomes so far, repeat.
+  const rounds = 6;
+  const online = (explore: boolean): { totals: Metrics; final: ReturnType<typeof learn> } => {
+    const batch = Math.ceil(tasks.length / rounds);
+    let ctx = base;
+    const allRows: Row[] = [];
+    const totals: Metrics = { first_pass: 0, final_pass: 0, cost: 0, failure_cost: 0, minutes: 0, shares: {}, rows: [] };
+    for (let r = 0; r < rounds; r += 1) {
+      const m = run(ctx, tasks.slice(r * batch, (r + 1) * batch), truth, 100 + r, providers, explore);
+      totals.first_pass += m.first_pass;
+      totals.final_pass += m.final_pass;
+      totals.cost += m.cost;
+      totals.failure_cost += m.failure_cost;
+      totals.minutes += m.minutes;
+      for (const [k, v] of Object.entries(m.shares)) totals.shares[k] = (totals.shares[k] ?? 0) + v;
+      allRows.push(...m.rows);
+      ctx = learn({ ...m, rows: allRows }).ctx;
+    }
+    return { totals: { ...totals, rows: allRows }, final: learn({ ...totals, rows: allRows }) };
+  };
+
+  const before = run(base, tasks, truth, 1, providers, false);
+  const det = online(false);
+  const exp = online(true);
+  const stats = exp.final.stats;
 
   const fmt = (label: string, x: Metrics): string => {
     const shares = Object.entries(x.shares)
@@ -158,9 +206,12 @@ function main(): void {
 
   console.log(`Simulated ${tasks.length} tasks; hidden true bias (index points): ${JSON.stringify(truth)}${providers ? `; providers: ${providers.join(",")}` : ""}\n`);
   console.log(`${"policy".padEnd(22)} ${"1st%".padStart(6)} ${"fin%".padStart(6)} ${"$tok/t".padStart(8)} ${"$+fail/t".padStart(9)} ${"min/t".padStart(6)}  shares`);
-  console.log(fmt("router (AA only)", before));
-  console.log(fmt("router (calibrated)", after));
-  console.log("\nRecovered bias per provider:model|role (n >= 20):");
+  console.log(fmt("prior only (static)", before));
+  console.log(fmt(`online, ${rounds} rounds`, det.totals));
+  console.log(fmt(`online + exploration`, exp.totals));
+  const pairs = (st: ReturnType<typeof summarize>): number => st.filter((x) => x.n >= 20).length;
+  console.log(`\n(model, role) pairs with n >= 20: online ${pairs(det.final.stats)}, online + exploration ${pairs(stats)}`);
+  console.log("\nBias estimates after online + exploration (n >= 20):");
   for (const s of stats.filter((s) => s.n >= 20)) {
     const fam = base.frontier.entries.find((e) => `${e.provider}:${e.model}` === s.key)?.family ?? "?";
     console.log(`  ${`${s.key}|${s.role}`.padEnd(44)} n=${String(s.n).padStart(4)}  learned ${s.implied_bias.toFixed(1).padStart(5)}  true ${(truth[fam] ?? 0).toFixed(1)}`);

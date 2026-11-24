@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "_doc": "Tunable routing model. Override any key in roles.local.json (deep-merged, gitignored). Quality is in AA-intelligence-index points: every metric is quantile-mapped onto that scale. Metrics not present in benchmarks.json are skipped (mirror = intelligence index only; AA free API adds coding/agentic indices). Token profiles and $ values are first guesses; refine from outcomes.jsonl via scripts/calibrate.ts.",
+  "_doc": "Tunable routing model. Override any key in roles.local.json (deep-merged, gitignored). Quality is in AA-intelligence-index points: every metric (AA fields and epoch:<name> from the Epoch AI hub) is quantile-mapped onto that scale; metrics missing for an entry are skipped and weights renormalize. With use_agentic_measurements, cost and time come from measured agent runs (CursorBench via Epoch) scaled by agentic_task_scale; the token profile then only prices entries without measurements, anchored to the measured ones. Refine from outcomes.jsonl via scripts/calibrate.ts.",
   "defaults": {
     "floors": {
       "R0": 24,
@@ -29,6 +29,13 @@
     "floor_adjustments": {
       "strict_single_file": -1,
       "subjective": 1
+    },
+    "agentic_step_overhead_s": 2,
+    "exploration": {
+      "enabled": true,
+      "band": 0.2,
+      "temperature": 0.05,
+      "novelty_bonus": 1
     }
   },
   "quota_cost_multipliers": {
@@ -54,6 +61,8 @@
       "description": "Read-only search, log triage, summaries. Input-heavy, short answers; quality above the floor buys little.",
       "metrics": {
         "artificial_analysis_agentic_index": 2,
+        "epoch:apex_agents": 1,
+        "epoch:cursorbench": 1,
         "artificial_analysis_intelligence_index": 1
       },
       "tokens": {
@@ -68,13 +77,18 @@
         "R1": 0.6,
         "R2": 1.2,
         "R3": 2.5
-      }
+      },
+      "use_agentic_measurements": true,
+      "agentic_task_scale": 0.3
     },
     "implement": {
       "description": "Bugfix, feature slice, tests, mechanical refactor with an acceptance gate.",
       "metrics": {
-        "artificial_analysis_coding_index": 3,
-        "artificial_analysis_agentic_index": 2,
+        "epoch:cursorbench": 4,
+        "artificial_analysis_coding_index": 2,
+        "artificial_analysis_agentic_index": 1,
+        "epoch:scicode": 1,
+        "epoch:frontiercode": 1,
         "artificial_analysis_intelligence_index": 1
       },
       "tokens": {
@@ -89,14 +103,19 @@
         "R1": 2.5,
         "R2": 6,
         "R3": 12
-      }
+      },
+      "use_agentic_measurements": true,
+      "agentic_task_scale": 1
     },
     "debug": {
       "description": "Stateful/multi-module debugging, unknown root cause.",
       "metrics": {
-        "artificial_analysis_coding_index": 2,
+        "epoch:cursorbench": 3,
+        "epoch:terminalbench": 2,
         "artificial_analysis_agentic_index": 2,
-        "artificial_analysis_intelligence_index": 2
+        "epoch:apex_agents": 1,
+        "artificial_analysis_coding_index": 1,
+        "artificial_analysis_intelligence_index": 1
       },
       "tokens": {
         "input": 600000,
@@ -110,13 +129,16 @@
         "R1": 4,
         "R2": 8,
         "R3": 16
-      }
+      },
+      "use_agentic_measurements": true,
+      "agentic_task_scale": 1.5
     },
     "design": {
       "description": "Architecture and tradeoff analysis; reasoning-heavy, little tool use.",
       "metrics": {
         "artificial_analysis_intelligence_index": 3,
-        "artificial_analysis_coding_index": 1
+        "epoch:eci": 2,
+        "epoch:frontiercode": 1
       },
       "tokens": {
         "input": 150000,
@@ -130,12 +152,15 @@
         "R1": 5,
         "R2": 10,
         "R3": 20
-      }
+      },
+      "use_agentic_measurements": false
     },
     "review": {
       "description": "Diff review. A miss is expensive; prefer a different family than the author.",
       "metrics": {
-        "artificial_analysis_coding_index": 3,
+        "artificial_analysis_coding_index": 2,
+        "epoch:cursorbench": 2,
+        "epoch:scicode": 1,
         "artificial_analysis_intelligence_index": 1
       },
       "tokens": {
@@ -151,7 +176,9 @@
         "R2": 8,
         "R3": 15
       },
-      "cross_family": true
+      "cross_family": true,
+      "use_agentic_measurements": true,
+      "agentic_task_scale": 0.4
     }
   }
 }

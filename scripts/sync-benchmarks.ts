@@ -12,8 +12,16 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PATHS, loadOverrides, loadQuota, loadRoles } from "./config.ts";
-import { aaOutputTokens, buildQuantileMapper, collectMetricNames, median } from "./model.ts";
+import { existsSync } from "node:fs";
+import { PATHS, aaApiKey, loadOverrides, loadQuota, loadRoles } from "./config.ts";
+import { EPOCH_BENCHMARKS, fetchEpoch, slugify } from "./epoch.ts";
+import {
+  aaOutputTokens,
+  buildPairMapper,
+  buildQuantileMapper,
+  collectMetricNames,
+  median,
+} from "./model.ts";
 import { renderTable } from "./route.ts";
 import {
   BASE_METRIC,
@@ -25,6 +33,9 @@ import {
   parseAAModelRecord,
   type AAModelRecord,
   type AATokenCounts,
+  type AgenticMeasurement,
+  type EpochFile,
+  type EpochRow,
   type BenchmarkSource,
   type CachedBenchmarksFile,
   type CatalogModelSpec,
@@ -100,6 +111,7 @@ interface CliArgs {
   readonly refresh: boolean;
   readonly offline: boolean;
   readonly dryRun: boolean;
+  readonly noEpoch: boolean;
   readonly replaceCatalog: boolean;
   readonly modelsArg: readonly string[] | null;
   readonly capabilitiesPath: string | null;
@@ -166,6 +178,7 @@ function parseArgs(argv: readonly string[]): CliArgs {
   let refresh = false;
   let offline = false;
   let dryRun = false;
+  let noEpoch = false;
   let replaceCatalog = false;
   let modelsArg: readonly string[] | null = null;
   let capabilitiesPath: string | null = null;
@@ -181,6 +194,8 @@ function parseArgs(argv: readonly string[]): CliArgs {
     const arg = argv[i];
     if (arg === "--dry-run") {
       dryRun = true;
+    } else if (arg === "--no-epoch") {
+      noEpoch = true;
     } else if (arg === "--refresh") {
       refresh = true;
     } else if (arg === "--offline") {
@@ -233,7 +248,12 @@ Options:
   --source=mirror         Force zero-key daily Artificial Analysis mirror
   --source=api            Force AA API v2 free tier (requires ARTIFICIAL_ANALYSIS_API_KEY)
   --dry-run               Print computed frontier without writing files
-  --check-models a,b,c    Exit 2 if any model ID is uncalibrated in frontier.json (no network)
+  --no-epoch              Do not use Epoch AI benchmark data (CursorBench, APEX-Agents, ECI, ...)
+  --check-models a,b,c    Exit 2 if any model ID is uncalibrated in the active frontier (no network)
+
+AA API key: ARTIFICIAL_ANALYSIS_API_KEY env var or <skill-dir>/aa-api-key.local (gitignored).
+API-derived and Epoch data stay local (benchmarks.local.json, epoch.local.json, frontier.local.json);
+the tracked benchmarks.json/frontier.json are mirror-only.
 `);
       process.exit(0);
     } else {
@@ -246,6 +266,7 @@ Options:
     refresh,
     offline,
     dryRun,
+    noEpoch,
     replaceCatalog,
     modelsArg,
     capabilitiesPath,
@@ -537,17 +558,17 @@ function parseBenchmarks(
 }
 
 async function fetchFullBenchmarks(mode: "auto" | "mirror" | "api"): Promise<CachedBenchmarksFile> {
-  const apiKey = (process.env["ARTIFICIAL_ANALYSIS_API_KEY"] ?? process.env["AA_API_KEY"])?.trim();
+  const apiKey = aaApiKey();
   if (mode === "api" && !apiKey) {
-    throw new Error("--source=api requires ARTIFICIAL_ANALYSIS_API_KEY in the environment.");
+    throw new Error("--source=api requires ARTIFICIAL_ANALYSIS_API_KEY or aa-api-key.local.");
   }
   if (mode !== "mirror" && apiKey) return fetchFromApi(apiKey);
   return fetchFromMirror();
 }
 
-async function loadCachedBenchmarks(): Promise<CachedBenchmarksFile | null> {
+async function loadCachedBenchmarks(path: string): Promise<CachedBenchmarksFile | null> {
   try {
-    return parseBenchmarks(JSON.parse(await readFile(PATHS.benchmarks, "utf8")), "artificial_analysis_mirror", MIRROR_URL);
+    return parseBenchmarks(JSON.parse(await readFile(path, "utf8")), "artificial_analysis_mirror", MIRROR_URL);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
@@ -561,7 +582,8 @@ async function loadExistingFrontierLists(): Promise<{
   unmatched: readonly string[];
 } | null> {
   try {
-    const raw: unknown = JSON.parse(await readFile(PATHS.frontier, "utf8"));
+    const path = existsSync(PATHS.frontierLocal) ? PATHS.frontierLocal : PATHS.frontier;
+    const raw: unknown = JSON.parse(await readFile(path, "utf8"));
     if (!isRecord(raw)) return null;
     const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter(isNonEmptyString) : []);
     return {
@@ -614,10 +636,83 @@ function mapCatalog(
   return { candidates, unmatched: [...unmatched].sort() };
 }
 
+const ALL_EFFORTS: readonly EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
+
+interface EpochMetric {
+  readonly n: number;
+  /** Mapped value for a catalog candidate, or undefined. */
+  readonly valueFor: (c: MappedCandidate, modelMaxIndex: number) => number | undefined;
+  readonly agenticFor: (c: MappedCandidate) => AgenticMeasurement | undefined;
+}
+
+/**
+ * Join an Epoch benchmark to AA records (by slug + effort) and quantile-map it onto the
+ * intelligence-index scale. Effort-level rows pair with that effort's AA record; model-level rows
+ * pair with the model's best AA variant and are applied to entries as an offset from it, so the
+ * effort gradient of the AA data survives.
+ */
+function buildEpochMetric(
+  name: string,
+  rows: readonly EpochRow[],
+  benchmarks: CachedBenchmarksFile,
+): EpochMetric {
+  const recordsByBase = new Map<string, readonly MappedCandidate[]>();
+  const lookup = (base: string): readonly MappedCandidate[] => {
+    let found = recordsByBase.get(base);
+    if (!found) {
+      found = matchSpecToAARecords(
+        { provider: "epoch", model: base, family: "other", option_key: "effort", allowed_efforts: ALL_EFFORTS },
+        benchmarks.models,
+        benchmarks.source,
+      );
+      recordsByBase.set(base, found);
+    }
+    return found;
+  };
+  const maxIndex = (cands: readonly MappedCandidate[]): number | undefined =>
+    cands.length ? Math.max(...cands.map((c) => c.record.index)) : undefined;
+
+  const pairs: Array<readonly [number, number]> = [];
+  const exact = new Map<string, EpochRow>();
+  const modelLevel = new Map<string, EpochRow>();
+  for (const row of rows) {
+    const cands = lookup(row.base);
+    if (row.effort) {
+      exact.set(`${row.base}|${row.effort}`, row);
+      const rec = cands.find((c) => c.effort === row.effort);
+      if (rec) pairs.push([row.score, rec.record.index]);
+    } else {
+      modelLevel.set(row.base, row);
+      const mi = maxIndex(cands);
+      if (mi !== undefined) pairs.push([row.score, mi]);
+    }
+  }
+  const mapper = buildPairMapper(pairs);
+  const n = mapper?.n ?? 0;
+  return {
+    n,
+    valueFor: (c, modelMax) => {
+      if (!mapper) return undefined;
+      const base = slugify(c.model);
+      const ex = exact.get(`${base}|${c.effort}`);
+      if (ex) return mapper.map(ex.score);
+      const ml = modelLevel.get(base);
+      if (ml) return c.record.index + (mapper.map(ml.score) - modelMax);
+      return undefined;
+    },
+    agenticFor: (c) => {
+      const ex = exact.get(`${slugify(c.model)}|${c.effort}`);
+      if (!ex || ex.cost === undefined || ex.tokens === undefined || ex.steps === undefined) return undefined;
+      return { source: `epoch:${name}`, cost_per_task: ex.cost, tokens_per_task: ex.tokens, steps_per_task: ex.steps };
+    },
+  };
+}
+
 export function buildFrontier(
   catalog: readonly CatalogModelSpec[],
   benchmarks: CachedBenchmarksFile,
   minCoverage: number,
+  epoch: EpochFile | null = null,
 ): FrontierFile {
   const { candidates, unmatched } = mapCatalog(catalog, benchmarks);
 
@@ -630,6 +725,20 @@ export function buildFrontier(
     if (m.n >= minCoverage || metric === BASE_METRIC) mappers.set(metric, m.map);
   }
 
+  const epochMetrics = new Map<string, EpochMetric>();
+  const agenticRows: EpochRow[] = [];
+  for (const [name, rows] of Object.entries(epoch?.benchmarks ?? {})) {
+    const m = buildEpochMetric(name, rows, benchmarks);
+    coverage[`epoch:${name}`] = m.n;
+    if (m.n >= minCoverage) epochMetrics.set(`epoch:${name}`, m);
+    for (const r of rows) if (r.tokens !== undefined && r.steps !== undefined) agenticRows.push(r);
+  }
+  const modelMax = new Map<string, number>();
+  for (const c of candidates) {
+    const key = `${c.provider}:${c.model}`;
+    modelMax.set(key, Math.max(modelMax.get(key) ?? -Infinity, c.record.index));
+  }
+
   const verbosityRef = median(benchmarks.models.map((m) => aaOutputTokens(m).tokens));
   const r2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -639,6 +748,12 @@ export function buildFrontier(
       const raw = metric === BASE_METRIC ? c.record.index : c.record.evals?.[metric];
       if (raw === undefined) continue;
       metrics[metric] = r2(map(raw));
+    }
+    let agentic: AgenticMeasurement | undefined;
+    for (const [metric, em] of epochMetrics) {
+      const v = em.valueFor(c, modelMax.get(`${c.provider}:${c.model}`) ?? c.record.index);
+      if (v !== undefined) metrics[metric] = r2(v);
+      agentic ??= em.agenticFor(c);
     }
     const out = aaOutputTokens(c.record);
     return {
@@ -662,6 +777,7 @@ export function buildFrontier(
         output_tokens_measured: out.measured,
       },
       metrics,
+      ...(agentic ? { agentic } : {}),
     };
   });
 
@@ -683,6 +799,15 @@ export function buildFrontier(
     attribution: benchmarks.attribution,
     verbosity_reference_tokens: Math.round(verbosityRef),
     metric_coverage: coverage,
+    ...(agenticRows.length > 0
+      ? {
+          agentic_reference: {
+            tokens_per_task: Math.round(median(agenticRows.map((r) => r.tokens ?? 0))),
+            steps_per_task: Math.round(median(agenticRows.map((r) => r.steps ?? 0))),
+          },
+        }
+      : {}),
+    ...(epoch ? { epoch_fetched_at: epoch.fetched_at } : {}),
     catalog,
     entries,
     tracked_models: [...new Set(candidates.map((c) => c.model))].sort(),
@@ -719,35 +844,62 @@ async function main(): Promise<number> {
   const baseCatalog = existing && existing.catalog.length > 0 ? existing.catalog : SEED_CATALOG;
   const catalog = mergeCatalogs(baseCatalog, incoming, args.replaceCatalog);
 
-  let benchmarks = await loadCachedBenchmarks();
+  // AA data: API (with key) -> benchmarks.local.json; mirror -> tracked benchmarks.json.
+  const useApi = args.source !== "mirror" && aaApiKey() !== undefined;
+  const aaPath = useApi ? PATHS.benchmarksLocal : PATHS.benchmarks;
+  let benchmarks = (await loadCachedBenchmarks(aaPath)) ?? (useApi && args.offline ? await loadCachedBenchmarks(PATHS.benchmarks) : null);
   let shouldFetch = args.refresh || benchmarks === null || (!hasIncoming && !args.offline);
   if (!shouldFetch && benchmarks && hasIncoming && !args.offline) {
     shouldFetch = mapCatalog(catalog, benchmarks).unmatched.length > 0;
   }
   let fetched = false;
   if (shouldFetch) {
-    if (args.offline) throw new Error("No cached benchmarks.json found and --offline was specified.");
+    if (args.offline) throw new Error("No cached benchmarks found and --offline was specified.");
     benchmarks = await fetchFullBenchmarks(args.source);
     fetched = true;
   }
   if (!benchmarks) throw new Error("Unable to load Artificial Analysis benchmarks.");
 
-  const frontier = buildFrontier(catalog, benchmarks, roles.defaults.min_metric_coverage);
+  // Epoch: cached in epoch.local.json; refreshed with the AA data.
+  let epoch: EpochFile | null = null;
+  let epochFetched = false;
+  if (!args.noEpoch) {
+    const specs = { ...EPOCH_BENCHMARKS, ...(roles.epoch_benchmarks ?? {}) };
+    if (existsSync(PATHS.epochLocal)) {
+      epoch = JSON.parse(await readFile(PATHS.epochLocal, "utf8")) as EpochFile;
+    }
+    if (!args.offline && (epoch === null || args.refresh || (!hasIncoming && fetched))) {
+      try {
+        epoch = await fetchEpoch(specs);
+        epochFetched = true;
+      } catch (err) {
+        console.warn(`Epoch fetch failed (${err instanceof Error ? err.message : String(err)}); continuing ${epoch ? "with cached data" : "without it"}.`);
+      }
+    }
+  }
+
+  const frontier = buildFrontier(catalog, benchmarks, roles.defaults.min_metric_coverage, epoch);
   if (args.dryRun) {
     console.log(JSON.stringify(frontier, null, 2));
     return 0;
   }
-  if (fetched) await writeFile(PATHS.benchmarks, `${JSON.stringify(benchmarks, null, 2)}\n`, "utf8");
-  await writeFile(PATHS.frontier, `${JSON.stringify(frontier, null, 2)}\n`, "utf8");
+  const local = benchmarks.source === "artificial_analysis_api" || epoch !== null;
+  const frontierPath = local ? PATHS.frontierLocal : PATHS.frontier;
+  if (fetched) {
+    const out = benchmarks.source === "artificial_analysis_api" ? PATHS.benchmarksLocal : PATHS.benchmarks;
+    await writeFile(out, `${JSON.stringify(benchmarks, null, 2)}\n`, "utf8");
+  }
+  if (epochFetched && epoch) await writeFile(PATHS.epochLocal, `${JSON.stringify(epoch)}\n`, "utf8");
+  await writeFile(frontierPath, `${JSON.stringify(frontier, null, 2)}\n`, "utf8");
 
   const table = renderTable({ frontier, roles, overrides: loadOverrides(), quota: loadQuota() });
-  await writeFile(PATHS.routesTable, table, "utf8");
+  await writeFile(local ? PATHS.routesTableLocal : PATHS.routesTable, table, "utf8");
 
   const usable = Object.entries(frontier.metric_coverage)
     .filter(([m, n]) => n >= roles.defaults.min_metric_coverage || m === BASE_METRIC)
     .map(([m]) => m);
   console.log(
-    `Wrote ${frontier.entries.length} entries to frontier.json and routes.md (${benchmarks.source}${benchmarks.api_tier ? `/${benchmarks.api_tier}` : ""}, ${fetched ? "fetched" : "cached"} ${benchmarks.models.length} AA models, ${usable.length} usable metrics).`,
+    `Wrote ${frontier.entries.length} entries to ${local ? "frontier.local.json and routes.local.md" : "frontier.json and routes.md"} (${benchmarks.source}${benchmarks.api_tier ? `/${benchmarks.api_tier}` : ""}, ${fetched ? "fetched" : "cached"} ${benchmarks.models.length} AA models${epoch ? `, Epoch ${epochFetched ? "fetched" : "cached"}` : ""}, ${usable.length} usable metrics: ${usable.join(", ")}).`,
   );
   if (frontier.unmatched_models.length > 0) {
     console.log(`Unmatched models (not in AA snapshot): ${frontier.unmatched_models.join(", ")}`);

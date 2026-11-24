@@ -100,7 +100,51 @@ export interface CachedBenchmarksFile {
 }
 
 // ---------------------------------------------------------------------------
-// Frontier (frontier.json): pure AA-derived data, no overrides applied.
+// Epoch AI benchmarking hub (epoch.local.json)
+// ---------------------------------------------------------------------------
+
+export interface EpochBenchmarkSpec {
+  /** Path inside Epoch's benchmark_data.zip. */
+  readonly file: string;
+  readonly score_column: string;
+  /** Column holding the model id ("<base>_<effort>"); default "Model version". */
+  readonly model_column?: string;
+  /** ids are display names (e.g. "Claude Opus 5.5"), always model-level. */
+  readonly display_names?: boolean;
+  /** Measured agent-run columns (CursorBench-style). */
+  readonly cost_column?: string;
+  readonly tokens_column?: string;
+  readonly steps_column?: string;
+}
+
+export interface EpochRow {
+  /** Normalized base slug, e.g. "claude-opus-5-5". */
+  readonly base: string;
+  /** null = model-level (effort unknown/not reported). */
+  readonly effort: EffortLevel | null;
+  readonly score: number;
+  readonly cost?: number;
+  readonly tokens?: number;
+  readonly steps?: number;
+}
+
+export interface EpochFile {
+  readonly fetched_at: string;
+  readonly source_url: string;
+  readonly attribution: string;
+  readonly benchmarks: Readonly<Record<string, readonly EpochRow[]>>;
+}
+
+/** Measured agent-harness cost profile for one (model, effort), from CursorBench. */
+export interface AgenticMeasurement {
+  readonly source: string;
+  readonly cost_per_task: number;
+  readonly tokens_per_task: number;
+  readonly steps_per_task: number;
+}
+
+// ---------------------------------------------------------------------------
+// Frontier (frontier.json / frontier.local.json): pure benchmark-derived data, no overrides.
 // ---------------------------------------------------------------------------
 
 export interface CatalogModelSpec {
@@ -133,8 +177,9 @@ export interface FrontierEntry {
     readonly output_tokens: number;
     readonly output_tokens_measured: boolean;
   };
-  /** Every available AA metric, quantile-mapped onto the intelligence-index scale. */
+  /** Every available metric (AA fields, "epoch:<name>"), quantile-mapped onto the intelligence-index scale. */
   readonly metrics: Readonly<Record<string, number>>;
+  readonly agentic?: AgenticMeasurement;
 }
 
 export interface FrontierFile {
@@ -150,6 +195,9 @@ export interface FrontierFile {
   readonly verbosity_reference_tokens: number;
   /** Number of snapshot models with both the metric and the base index (mapping support). */
   readonly metric_coverage: Readonly<Record<string, number>>;
+  /** Snapshot medians of agentic measurements (scale reference). */
+  readonly agentic_reference?: { readonly tokens_per_task: number; readonly steps_per_task: number };
+  readonly epoch_fetched_at?: string;
   readonly catalog: readonly CatalogModelSpec[];
   readonly entries: readonly FrontierEntry[];
   readonly tracked_models: readonly string[];
@@ -184,6 +232,13 @@ export interface RoleSpec {
   readonly failure_cost_usd: Readonly<Record<Floor, number>>;
   readonly max_ttft_s?: Readonly<Partial<Record<Floor, number>>>;
   readonly verbosity_exponent?: number;
+  /**
+   * Use measured agent-run cost/tokens/steps (CursorBench) where available, scaled by
+   * agentic_task_scale (this role's task size relative to a CursorBench task). Entries without
+   * measurements fall back to the token profile, anchored to the measured ones.
+   */
+  readonly use_agentic_measurements?: boolean;
+  readonly agentic_task_scale?: number;
   readonly p_pass_at_floor?: number;
   readonly logistic_scale?: number;
   /** Require a different model family than the author when one is eligible. */
@@ -191,6 +246,16 @@ export interface RoleSpec {
 }
 
 export type RoleName = string;
+
+export interface ExplorationConfig {
+  readonly enabled: boolean;
+  /** Only candidates with expected cost within (1 + band) × best are considered. */
+  readonly band: number;
+  /** Softmax temperature as a fraction of the best expected cost: w = exp(-ΔE / (τ·E_best)). */
+  readonly temperature: number;
+  /** Weight multiplier (1 + novelty_bonus / (1 + n)) for candidates with few logged outcomes. */
+  readonly novelty_bonus: number;
+}
 
 export interface RolesFile {
   readonly schema_version: 1;
@@ -208,6 +273,8 @@ export interface RolesFile {
     readonly cache_hit_price_ratio: number;
     /** Minimum snapshot models carrying a metric before it is used. */
     readonly min_metric_coverage: number;
+    /** Seconds of tool/IO overhead per measured agent step (agentic time estimate). */
+    readonly agentic_step_overhead_s: number;
     /** Latency value multiplier for --background tasks (nobody waits on them). */
     readonly background_latency_factor: number;
     /** A strict gate catches failures cheaply; subjective failures surface late. */
@@ -216,7 +283,10 @@ export interface RolesFile {
       readonly strict_single_file: number;
       readonly subjective: number;
     };
+    readonly exploration: ExplorationConfig;
   };
+  /** Extra/overriding Epoch benchmark specs, keyed by metric name (used as "epoch:<name>"). */
+  readonly epoch_benchmarks?: Readonly<Record<string, EpochBenchmarkSpec>>;
   readonly quota_cost_multipliers: Readonly<Record<Exclude<QuotaState, "throttled">, number>>;
   readonly category_roles: Readonly<Record<TaskCategory, RoleName>>;
   readonly roles: Readonly<Record<RoleName, RoleSpec>>;
@@ -290,8 +360,11 @@ export interface OutcomeRecord {
   readonly entry_id: string;
   readonly quota_state: QuotaState;
   readonly p_pass_est: number;
+  /** quality_bias in effect when routed; lets calibration fit absolute biases across tuning changes. */
+  readonly quality_bias?: number;
   readonly cost_est_usd: number;
   readonly passed_first_try: boolean;
+  readonly explored?: boolean;
   readonly review_passed?: boolean | null;
   readonly escalated_to?: Floor | null;
   readonly duration_s?: number;

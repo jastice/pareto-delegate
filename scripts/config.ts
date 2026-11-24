@@ -14,6 +14,10 @@ export const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const PATHS = {
   benchmarks: resolve(SKILL_DIR, "benchmarks.json"),
   frontier: resolve(SKILL_DIR, "frontier.json"),
+  frontierLocal: resolve(SKILL_DIR, "frontier.local.json"),
+  benchmarksLocal: resolve(SKILL_DIR, "benchmarks.local.json"),
+  epochLocal: resolve(SKILL_DIR, "epoch.local.json"),
+  aaKeyLocal: resolve(SKILL_DIR, "aa-api-key.local"),
   roles: resolve(SKILL_DIR, "roles.json"),
   rolesLocal: resolve(SKILL_DIR, "roles.local.json"),
   overrides: resolve(SKILL_DIR, "overrides.json"),
@@ -22,6 +26,7 @@ export const PATHS = {
   quotaLocal: resolve(SKILL_DIR, "quota.local.json"),
   outcomes: resolve(SKILL_DIR, "outcomes.jsonl"),
   routesTable: resolve(SKILL_DIR, "routes.md"),
+  routesTableLocal: resolve(SKILL_DIR, "routes.local.md"),
 } as const;
 
 function readJson(path: string): unknown {
@@ -44,7 +49,19 @@ export function deepMerge<T>(base: T, patch: unknown): T {
   return out as T;
 }
 
-export function loadFrontier(path: string = PATHS.frontier): FrontierFile {
+/** AA API key: env first, then the gitignored aa-api-key.local file. */
+export function aaApiKey(): string | undefined {
+  const env = (process.env["ARTIFICIAL_ANALYSIS_API_KEY"] ?? process.env["AA_API_KEY"])?.trim();
+  if (env) return env;
+  if (!existsSync(PATHS.aaKeyLocal)) return undefined;
+  const key = readFileSync(PATHS.aaKeyLocal, "utf8").trim();
+  return key.length > 0 ? key : undefined;
+}
+
+/** frontier.local.json (built from local API/Epoch data) wins over the tracked mirror frontier. */
+export function loadFrontier(
+  path: string = existsSync(PATHS.frontierLocal) ? PATHS.frontierLocal : PATHS.frontier,
+): FrontierFile {
   const raw = readJson(path);
   if (!isRecord(raw) || raw["schema_version"] !== 2) {
     throw new Error(
@@ -70,4 +87,25 @@ export function loadQuota(): QuotaFile {
   if (local !== undefined) return local as QuotaFile;
   const base = readOptionalJson(PATHS.quota);
   return (base ?? { schema_version: 1, updated_at: "", providers: {} }) as QuotaFile;
+}
+
+/** Count logged outcomes per "provider:model|role" from outcomes.jsonl (for exploration novelty). */
+export function loadObservationCounts(): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (!existsSync(PATHS.outcomes)) return counts;
+  for (const line of readFileSync(PATHS.outcomes, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const rec: unknown = JSON.parse(line);
+      if (!isRecord(rec)) continue;
+      const id = rec["entry_id"];
+      const role = rec["role"];
+      if (typeof id !== "string" || typeof role !== "string") continue;
+      const key = `${id.split(":").slice(0, 2).join(":")}|${role}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return counts;
 }

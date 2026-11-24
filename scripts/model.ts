@@ -56,14 +56,20 @@ export function buildQuantileMapper(
   if (metric === BASE_METRIC) {
     return { map: (x) => x, n: records.length };
   }
-  const xs: number[] = [];
-  const ys: number[] = [];
+  const pairs: Array<readonly [number, number]> = [];
   for (const r of records) {
     const x = metricValue(r, metric);
-    if (x === undefined) continue;
-    xs.push(x);
-    ys.push(r.index);
+    if (x !== undefined) pairs.push([x, r.index]);
   }
+  return buildPairMapper(pairs);
+}
+
+/** Equal-percentile mapper from (metric value, base index) pairs. */
+export function buildPairMapper(
+  pairs: ReadonlyArray<readonly [number, number]>,
+): { readonly map: (x: number) => number; readonly n: number } | null {
+  const xs = pairs.map((p) => p[0]);
+  const ys = pairs.map((p) => p[1]);
   const n = xs.length;
   if (n < 2) return null;
   xs.sort((a, b) => a - b);
@@ -252,9 +258,18 @@ export interface AttemptEstimate {
   readonly verbosity: number;
   readonly token_cost_usd: number;
   readonly time_s: number;
+  /** "agentic" = measured agent-run profile; "profile" = role token profile (anchored if possible). */
+  readonly basis: "agentic" | "profile";
 }
 
-export function estimateAttempt(
+export interface Anchors {
+  readonly cost: number;
+  readonly time: number;
+}
+
+const NO_ANCHOR: Anchors = { cost: 1, time: 1 };
+
+function profileEstimate(
   entry: FrontierEntry,
   role: RoleSpec,
   roles: RolesFile,
@@ -272,7 +287,63 @@ export function estimateAttempt(
     1e6;
   const tps = entry.aa.tps > 0 ? entry.aa.tps : 50;
   const time = t.turns * entry.aa.ttft * roles.defaults.turn_latency_factor + outTokens / tps;
-  return { verbosity, token_cost_usd: tokenCost, time_s: time };
+  return { verbosity, token_cost_usd: tokenCost, time_s: time, basis: "profile" };
+}
+
+function agenticEstimate(
+  entry: FrontierEntry,
+  role: RoleSpec,
+  roles: RolesFile,
+  frontier: Pick<FrontierFile, "agentic_reference">,
+): AttemptEstimate | null {
+  const a = entry.agentic;
+  if (!a || !role.use_agentic_measurements) return null;
+  const scale = role.agentic_task_scale ?? 1;
+  const refTokens = frontier.agentic_reference?.tokens_per_task ?? a.tokens_per_task;
+  const tps = entry.aa.tps > 0 ? entry.aa.tps : 50;
+  const tokens = a.tokens_per_task * scale;
+  return {
+    verbosity: refTokens > 0 ? a.tokens_per_task / refTokens : 1,
+    token_cost_usd: a.cost_per_task * scale,
+    // Tokens include reasoning, so tokens/tps covers thinking; steps add tool/IO overhead.
+    time_s: tokens / tps + a.steps_per_task * scale * roles.defaults.agentic_step_overhead_s,
+    basis: "agentic",
+  };
+}
+
+/**
+ * Median measured/profile ratios over entries that have agent-run measurements, so that
+ * profile-only entries are priced on the same scale as measured ones.
+ */
+export function agenticAnchors(
+  frontier: FrontierFile,
+  role: RoleSpec,
+  roles: RolesFile,
+): Anchors {
+  const costR: number[] = [];
+  const timeR: number[] = [];
+  for (const e of frontier.entries) {
+    const a = agenticEstimate(e, role, roles, frontier);
+    if (!a) continue;
+    const p = profileEstimate(e, role, roles, frontier);
+    if (p.token_cost_usd > 0) costR.push(a.token_cost_usd / p.token_cost_usd);
+    if (p.time_s > 0) timeR.push(a.time_s / p.time_s);
+  }
+  if (costR.length < 3) return NO_ANCHOR;
+  return { cost: median(costR), time: median(timeR) };
+}
+
+export function estimateAttempt(
+  entry: FrontierEntry,
+  role: RoleSpec,
+  roles: RolesFile,
+  frontier: Pick<FrontierFile, "verbosity_reference_tokens" | "agentic_reference">,
+  anchors: Anchors = NO_ANCHOR,
+): AttemptEstimate {
+  const measured = agenticEstimate(entry, role, roles, frontier);
+  if (measured) return measured;
+  const p = profileEstimate(entry, role, roles, frontier);
+  return { ...p, token_cost_usd: p.token_cost_usd * anchors.cost, time_s: p.time_s * anchors.time };
 }
 
 export function adjustFloor(

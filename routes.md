@@ -1,6 +1,6 @@
 # pareto-delegate routes (generated)
 
-Fallback for when `scripts/route.ts` cannot be run. Prefer the CLI: it applies live models, session throttling, author family and verifiability adjustments. Floors already include no verifiability shift here. Regenerate: `bun run scripts/route.ts --table --write`.
+Fallback for when `scripts/route.ts` cannot be run. Prefer the CLI: it applies live models, session throttling, author family and verifiability adjustments. Floors already include no verifiability shift here. Regenerate: `bun run scripts/route.ts --table --write`. Exploration is off in this table.
 
 Quota at generation: antigravity=normal, claudeAgent=normal, cursor=normal. Cells: `model:effort` (P(pass), est $).
 

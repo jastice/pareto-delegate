@@ -5,15 +5,15 @@ description: >-
   Code, Antigravity, Codex, Cursor). Activate whenever delegating subtasks via T3's
   `delegate_task` OR a harness's native subagent tool (`Agent`, `invoke_subagent`,
   `spawn_agent`). One CLI call picks (provider, model, effort) per task role and capability floor
-  from Artificial Analysis data, quota pressure and tunable cost/failure parameters, with
-  cross-family review and 1-shot escalation.
+  from Artificial Analysis and Epoch AI (CursorBench) data, quota pressure and tunable
+  cost/failure parameters, with exploration jitter, cross-family review and 1-shot escalation.
 ---
 
 # `pareto-delegate`
 
 Pick who does a delegated subtask by **role** (scout, implement, debug, design, review) and **capability floor** (R0–R3), minimizing expected cost = token cost × quota pressure + waiting time + P(fail) × failure cost. Never route below the floor to save quota.
 
-`<skill-dir>` is the directory containing this file. Run scripts with `bun run <skill-dir>/scripts/<name>.ts` (fallback: `node --experimental-strip-types <skill-dir>/scripts/<name>.ts`). **Do not read `frontier.json` or `benchmarks.json`**; the router reads them.
+`<skill-dir>` is the directory containing this file. Run scripts with `bun run <skill-dir>/scripts/<name>.ts` (fallback: `node --experimental-strip-types <skill-dir>/scripts/<name>.ts`). **Do not read `frontier*.json`, `benchmarks*.json` or `epoch.local.json`**; the router reads them.
 
 ## Step 0: Once per thread
 
@@ -38,13 +38,15 @@ bun run <skill-dir>/scripts/route.ts --category bugfix --floor R1 --verify stric
   [--live ...|--provider ...] [--author-family claude] [--throttled p|p:m,...] [--background]
 ```
 
+The router usually returns the expected-cost minimum, but sometimes samples a near-equal alternative (more likely the closer its expected cost, and for models with few logged outcomes) so calibration learns about them too. Output then has `explored: true` and the minimum as `best` (also first in `fallbacks`). Use the returned `target` either way; pass `--no-explore` only for high-stakes one-offs.
+
 Output (JSON): `target` `{providerInstanceId, model, options}` for `delegate_task`; `harness` hints for standalone tools (e.g. `claude_code_agent: {model: "opus", effort: "medium"}` → `Agent` `model` + `effort`; `codex_spawn_agent` → `model` + `reasoning_effort`); `est`; `fallbacks`; `outcome_template`.
 
 - Antigravity `invoke_subagent` has no exact model parameter: map the target to the nearest native tier by price class (cheap/fast models such as `*-hydrogen` → `flash`; flagship-class such as `*-neon`/`*-carbon` → `pro`; `inherit` when the target is the current model).
 - `target: null` (exit 3): nothing live clears the floor. Do the task in this thread or ask the user. Never pick something below the floor.
 - `--author-family <family of the implementer>` for `primary_review`: the router prefers another family when one is eligible.
 - `--background` for async sidecars nobody waits on (strictly test-gated leaf slices, parallel `second_opinion_review`, pre-flight R0 scouting): latency then costs ~nothing, which is how surplus quota on slower models gets used safely.
-- No `bun`/`node` available: use the table in `<skill-dir>/routes.md` (same model, default quota, no session state).
+- No `bun`/`node` available: use the table in `<skill-dir>/routes.local.md` if it exists, else `<skill-dir>/routes.md` (same model, default quota, no session state, no exploration).
 
 ## Step 3: Escalation (1-shot rule)
 
@@ -55,7 +57,7 @@ Output (JSON): `target` `{providerInstanceId, model, options}` for `delegate_tas
 
 ## Step 4: Telemetry
 
-After each delegated attempt, append the `outcome_template` as one JSON line to `<skill-dir>/outcomes.jsonl` with `ts`, `passed_first_try`, `duration_s` (from `t3_thread_read` timestamps in T3, wall time otherwise) and `escalated_to` filled in. `p_pass_est` must stay as emitted: `scripts/calibrate.ts` compares it with what happened.
+After each delegated attempt, append the `outcome_template` as one JSON line to `<skill-dir>/outcomes.jsonl` with `ts`, `passed_first_try`, `duration_s` (from `t3_thread_read` timestamps in T3, wall time otherwise) and `escalated_to` filled in. Keep `p_pass_est`, `quality_bias` and `explored` exactly as emitted: `scripts/calibrate.ts` de-biases predictions with them and compares against what happened.
 
 ## Tuning (for the user, not per task)
 
@@ -63,4 +65,5 @@ After each delegated attempt, append the `outcome_template` as one JSON line to 
 - `overrides.json` / `overrides.local.json`: `exclude`, `max_floor`, `floor_constraints`, `quality_bias`, `cost_multiplier` per `provider:*`, `provider:model` or `provider:model:effort`. Applied at route time; no resync.
 - `quota.local.json`: `surplus` / `normal` / `scarce` (+ `reserve_for_min_rung`) / `throttled` (+ `resets_at`).
 - `bun run <skill-dir>/scripts/calibrate.ts`: learned `quality_bias` suggestions from `outcomes.jsonl`.
-- `ARTIFICIAL_ANALYSIS_API_KEY` (free tier) + `sync-benchmarks.ts --refresh`: adds AA coding/agentic indices and cache-hit prices to role quality and cost.
+- `bun run <skill-dir>/scripts/sync-benchmarks.ts --refresh`: refreshes AA (free API with the key in `aa-api-key.local` or `ARTIFICIAL_ANALYSIS_API_KEY`, else the mirror) and Epoch data into local files.
+- `roles.json` → `defaults.exploration` (`band`, `temperature`, `novelty_bonus`, `enabled`) controls the jitter.
