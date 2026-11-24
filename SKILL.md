@@ -1,17 +1,19 @@
 ---
 name: pareto-delegate
 description: >-
-  Quota-aware, Pareto-frontier delegation policy for T3 Code.
-  ONLY activate inside T3 Code when the `t3-code` MCP tools (`orchestrator_capabilities`
-  and `delegate_task`) are available; ignore in standalone CLI or IDE sessions.
-  Routes delegated subtasks across providers, models, and reasoning effort levels
-  using calibrated Artificial Analysis benchmarks, hard quality floors, subscription
-  quota pressure, cross-provider review, and 1-shot escalation.
+  Quota-aware, Pareto-frontier delegation policy for T3 Code and standalone
+  coding harnesses (Claude Code, Antigravity, Codex, Cursor). Activate whenever
+  delegating subtasks via T3's `delegate_task` OR a harness's native subagent
+  tool (`Agent`, `invoke_subagent`, `spawn_agent`). Routes across providers (in
+  T3) or across a single provider's models and effort levels (standalone or
+  single-provider T3) using calibrated Artificial Analysis benchmarks, hard
+  quality floors, quota pressure, cross-provider review when available, and
+  1-shot escalation.
 ---
 
 # `pareto-delegate`
 
-Route delegated subtasks in T3 Code onto the calibrated `(provider, model, options)` Pareto frontier while respecting subscription quota pressure and hard quality floors.
+Route delegated subtasks onto the calibrated `(provider, model, options)` Pareto frontier while respecting quota pressure and hard quality floors. Works both **across providers in T3 Code** and **within a single provider** (either T3 Code with one provider enabled, or standalone CLI/IDE harnesses via native subagent tools).
 
 Let `<skill-dir>` denote the directory containing this `SKILL.md` file. All scripts and data files resolve relative to `<skill-dir>`, so the skill works unchanged regardless of where it is installed or which workspace repo is active.
 
@@ -45,11 +47,32 @@ No benchmarks or evals need to be run when installing this skill elsewhere:
 
 ---
 
+## Runtime Adapter (T3 Code vs. Standalone Single-Provider)
+
+Detect which delegation surface is available in this session:
+
+- **T3 Code mode** (`orchestrator_capabilities` and `delegate_task` are available):
+  - Discover live providers and models via `orchestrator_capabilities`.
+  - Dispatch with `delegate_task` passing exact `target: { providerInstanceId, model, options }`.
+  - Cancel runaway/superseded children with `task_cancel`.
+  - Works identically whether multiple providers or only a single provider is enabled.
+- **Standalone mode** (no T3 MCP tools; native subagent tool available):
+  - Scope `frontier.json` to your own provider (`claudeAgent` | `antigravity` | `codex` | `cursor`) and the models your harness can spawn.
+  - Skip `orchestrator_capabilities` and dispatch with your native subagent tool, mapping the selected `(model, options)` to the closest supported parameters:
+    - **Claude Code (`Agent`)**: pass `model` (e.g., `haiku`, `sonnet`, `opus`, or full model ID) and `effort` if supported; if per-call effort isn't exposed, pick the model matching the target rung (`R0` → Haiku/fast, `R1` → Sonnet or Opus-medium, `R2`/`R3` → Opus/Fable).
+    - **Antigravity (`invoke_subagent`)**: map the chosen rung onto the native `Model` tier (`R0` → `flash_lite` or `flash`, `R1` → `flash` or `inherit`, `R2`/`R3` → `pro` or `inherit` when already on a flagship model).
+    - **Codex (`spawn_agent`)**: pass `model` and `reasoning_effort` directly.
+    - **Other harnesses**: pass the closest supported model/effort parameter. If the harness has no subagent tool at all, do not use this skill.
+
+---
+
 ## Step 0: Live Capability Intersection & Sync Check (Once Per Thread)
 
-1. Call `orchestrator_capabilities` once per thread before the first `delegate_task`.
-2. Read `<skill-dir>/frontier.json` and `<skill-dir>/quota.local.json` (falling back to `<skill-dir>/quota.json`).
-3. **Sync only when out of sync:** Check whether any enabled provider (`canRunChildTask: true`) lists a model ID (ignoring meta aliases like `default`, `auto`, or `*orchestrator*`) that is in **neither** `frontier.json`'s `tracked_models` **nor** `unmatched_models`.
+1. Read `<skill-dir>/frontier.json` and `<skill-dir>/quota.local.json` (falling back to `<skill-dir>/quota.json`).
+2. **Discover live models:**
+   - **T3 Code mode:** Call `orchestrator_capabilities` once per thread before the first `delegate_task`, keeping only providers with `canRunChildTask: true`.
+   - **Standalone mode:** Filter `frontier.json` to your current provider and the models/tiers available in your harness.
+3. **Sync only when out of sync:** Check whether any enabled live model ID (ignoring meta aliases like `default`, `auto`, or `*orchestrator*`) is in **neither** `frontier.json`'s `tracked_models` **nor** `unmatched_models`.
    - If all enabled models are already accounted for: **do not fetch anything** — proceed directly to Step 1.
    - If new enabled models appeared: run the sync helper from any working directory, passing the new `provider:model` pairs (matches offline against cached `benchmarks.json` first; fetches a fresh full AA snapshot automatically only if a model is missing from cache):
      ```bash
@@ -57,7 +80,7 @@ No benchmarks or evals need to be run when installing this skill elsewhere:
      ```
      *(Fallback if `bun` is unavailable: `node <skill-dir>/scripts/sync-benchmarks.ts --models ...`.)*
    - Re-read `<skill-dir>/frontier.json` after syncing.
-4. Intersect `frontier.json` entries to keep only entries whose `provider` has `canRunChildTask: true` and whose `model` is currently listed by `orchestrator_capabilities`.
+4. Intersect `frontier.json` entries to keep only entries whose `provider` and `model` are live in this session.
 
 ---
 
@@ -102,7 +125,7 @@ Run this deterministic 4-step filter:
    3. **`scarce`** — Eligible only if `required_rung >= (reserve_for_min_rung ?? "R2")` **or** buckets 1–2 are empty.
 
 3. **Pareto Tie-Break & Cross-Provider Review:**
-   - For `primary_review`, exclude entries matching the implementer's `family` (`claude` | `gemini` | `grok` | `openai`) whenever another family is eligible.
+   - For `primary_review`, exclude entries matching the implementer's `family` (`claude` | `gemini` | `grok` | `openai`) whenever another family is eligible. In single-provider mode (no other family available), fall back cleanly to a fresh subagent on the same provider at the review rung (`R2`/`R3`).
    - Pick the lowest `rung_ranks[required_rung]` in the highest non-empty bucket.
 
 4. **Surplus-Soak Offload (Zero-Blast-Radius Sidecars):**
@@ -115,13 +138,13 @@ Run this deterministic 4-step filter:
 
 ## Step 3: Escalation Protocol (1-Shot Rule)
 
-Aligned with T3 Code's delegation rules (no polling loops; fresh `delegate_task` on escalation instead of steering a struggling child):
+Spawn a **fresh** delegate (`delegate_task` in T3 Code, or a new native subagent in standalone mode) on escalation instead of steering a struggling child:
 
-1. **Verification Failure:** If the child fails its acceptance gate, hedges, or edits out of scope, spawn a **fresh** `delegate_task` at `rung + 1` (or jump straight to `R3` if the spec was already unambiguous). Pass the goal, relevant diff/state, and exact failure output.
-2. **Poor Cross-Provider Review:** Patch tiny nitpicks yourself. For substantive correctness, edge-case, or design findings, escalate rework to `implementer_rung + 1` with the review findings verbatim.
+1. **Verification Failure:** If the child fails its acceptance gate, hedges, or edits out of scope, spawn a **fresh** delegate at `rung + 1` (or jump straight to `R3` if the spec was already unambiguous). Pass the goal, relevant diff/state, and exact failure output.
+2. **Poor Review:** Patch tiny nitpicks yourself. For substantive correctness, edge-case, or design findings, escalate rework to `implementer_rung + 1` with the review findings verbatim.
 3. **Time / Scope Overrun:**
-   - For quick `R0` tasks, `mode: "wait"` with a tight `timeoutMs` (up to `45000`) catches misestimated complexity early.
-   - For async `R1`/`R2` tasks, enforce a **1-shot rule per rung**: escalate on substantial rework rather than iterating at the same rung. Stop runaway or superseded delegates with `task_cancel`.
+   - For quick `R0` tasks in T3 Code, `mode: "wait"` with a tight `timeoutMs` (up to `45000`) catches misestimated complexity early.
+   - For async `R1`/`R2` tasks, enforce a **1-shot rule per rung**: escalate on substantial rework rather than iterating at the same rung. Stop runaway or superseded delegates (`task_cancel` in T3 Code, or your harness's cancel/kill tool).
 4. **Rate-Limit & Extra-Credits Reaction:**
    - If a delegate fails due to a provider rate limit, mark that provider `throttled` for the rest of the session and re-route to the next eligible candidate.
    - If a specific model fails because it requires extra usage credits or is unavailable on the user's plan, mark that model unavailable for the rest of the session, re-route to the next eligible candidate, and optionally suggest adding `{ "model_overrides": { "<provider>:<model>": { "exclude": true } } }` to `<skill-dir>/overrides.local.json` followed by `bun run <skill-dir>/scripts/sync-benchmarks.ts --offline`.
@@ -130,7 +153,7 @@ Aligned with T3 Code's delegation rules (no polling loops; fresh `delegate_task`
 
 ## Step 4: Telemetry (`outcomes.jsonl`)
 
-After a delegated task completes, append one compact JSON line to `<skill-dir>/outcomes.jsonl` (using `startedAt`/`completedAt` from `t3_thread_read` if helpful for `duration_s`):
+After a delegated task completes, append one compact JSON line to `<skill-dir>/outcomes.jsonl` (using `startedAt`/`completedAt` from `t3_thread_read` in T3 Code, or elapsed wall time in standalone mode, for `duration_s`):
 
 ```json
 {"ts":"2026-11-24T00:35:00Z","task_type":"bugfix","estimated_rung":"R1","verifiability":"strict","provider":"antigravity","model":"gemini-4-neon","options":{"thought_level":"low"},"quota_state":"normal","passed_first_try":true,"review_passed":true,"escalated_to":null,"duration_s":52}

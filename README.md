@@ -1,10 +1,10 @@
 # pareto-delegate
 
-A relocatable T3 Code skill and calibration framework for routing delegated agent tasks across heterogeneous providers, models, and reasoning effort levels.
+A relocatable skill and calibration framework for routing delegated agent tasks across heterogeneous providers, models, and reasoning effort levels — works both in **T3 Code** (multi- or single-provider via `delegate_task`) and in **standalone CLI/IDE harnesses** (single-provider via native subagent tools like Claude Code `Agent`, Antigravity `invoke_subagent`, or Codex `spawn_agent`).
 
 ## How It Works
 
-- **Zero network calls at delegation time:** Reads local [frontier.json](./frontier.json) and `quota.local.json` (falling back to [quota.json](./quota.json)) and intersects them with live `orchestrator_capabilities`.
+- **Zero network calls at delegation time:** Reads local [frontier.json](./frontier.json) and `quota.local.json` (falling back to [quota.json](./quota.json)) and intersects them with live `orchestrator_capabilities` (T3 Code) or the current harness's own provider models (standalone).
 - **Full AA cache + dynamic auto-matching:** Downloads the full Artificial Analysis v5 snapshot into [benchmarks.json](./benchmarks.json) (zero-key daily mirror by default, or official AA API v2 with `ARTIFICIAL_ANALYSIS_API_KEY`). When a new model appears in `orchestrator_capabilities`, [scripts/sync-benchmarks.ts](./scripts/sync-benchmarks.ts) auto-matches it against the full catalog (offline-first; fetches only if missing from cache or `--refresh` is passed) and recalculates `R0`–`R3`.
 - **Works in both API and subscription modes:** Default [quota.json](./quota.json) sets all providers to `"normal"` (pure API-cost Pareto routing). Copying it to gitignored `quota.local.json` lets you mark expiring plans `"surplus"` or tight plans `"scarce"`.
 - **Account-local overrides without evals:** Universal safety floors live in [overrides.json](./overrides.json); machine/plan-specific exclusions (e.g., models requiring extra usage credits) live in optional gitignored `overrides.local.json` and are merged automatically on sync.
@@ -47,12 +47,16 @@ bun run <skill-dir>/scripts/sync-benchmarks.ts --check-models claude-opus-5-5,ge
 
 ## Installation
 
-- **Antigravity inside T3 Code (T3-only):**
+- **Antigravity (T3 Code or standalone):**
   ```bash
+  # T3 Code Antigravity profile:
   mkdir -p ~/.t3/userdata/providers/antigravity/<profile-hash>/config/skills
   ln -s /path/to/pareto-delegate ~/.t3/userdata/providers/antigravity/<profile-hash>/config/skills/pareto-delegate
+
+  # Standalone Antigravity:
+  ln -s /path/to/pareto-delegate ~/.gemini/config/skills/pareto-delegate
   ```
-- **Claude / Cursor / Codex:** Symlink into `~/.claude/skills/pareto-delegate`, `~/.cursor/skills/pareto-delegate`, and/or `~/.codex/skills/pareto-delegate`. [SKILL.md](./SKILL.md) includes a frontmatter guard so standalone CLI/IDE sessions ignore it unless T3's `orchestrator_capabilities` and `delegate_task` MCP tools are available.
+- **Claude / Cursor / Codex (T3 Code or standalone):** Symlink into `~/.claude/skills/pareto-delegate`, `~/.cursor/skills/pareto-delegate`, and/or `~/.codex/skills/pareto-delegate`. [SKILL.md](./SKILL.md) automatically uses `orchestrator_capabilities` + `delegate_task` inside T3 Code and falls back to single-provider routing via the harness's native subagent tool in standalone sessions.
 
 ## Development & Evals
 

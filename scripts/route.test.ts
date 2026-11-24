@@ -136,4 +136,103 @@ describe("pareto-delegate routing policy", () => {
     });
     assert.equal(reviewOfClaude?.entry.family, "gemini");
   });
+
+  test("single-provider Antigravity covers R0-R3 and falls back on primary_review", () => {
+    const live = { antigravity: ["gemini-4-hydrogen", "gemini-4-neon"] };
+    const normalQuota: QuotaFile = {
+      schema_version: 1,
+      updated_at: "2026-11-24T00:00:00Z",
+      providers: { antigravity: { state: "normal", resets_at: null } },
+    };
+
+    const r0 = selectRoute(frontier, normalQuota, {
+      required_rung: "R0",
+      category: "research",
+      verifiability: "moderate",
+      blast_radius: "single_file",
+      live_models: live,
+    });
+    assert.equal(r0?.entry.model, "gemini-4-hydrogen");
+
+    const r1 = selectRoute(frontier, normalQuota, {
+      required_rung: "R1",
+      category: "bugfix",
+      verifiability: "strict",
+      blast_radius: "isolated_module",
+      live_models: live,
+    });
+    assert.equal(r1?.entry.model, "gemini-4-neon");
+    assert.equal(r1?.entry.options.thought_level, "low");
+
+    const review = selectRoute(frontier, normalQuota, {
+      required_rung: "R2",
+      category: "primary_review",
+      verifiability: "subjective",
+      blast_radius: "multi_module",
+      author_family: "gemini",
+      live_models: live,
+    });
+    assert.equal(review?.entry.provider, "antigravity");
+    assert.equal(review?.effective_rung, "R2");
+
+    const r3 = selectRoute(frontier, normalQuota, {
+      required_rung: "R3",
+      category: "architecture",
+      verifiability: "subjective",
+      blast_radius: "multi_module",
+      live_models: live,
+    });
+    assert.equal(r3?.entry.model, "gemini-4-neon");
+    assert.equal(r3?.effective_rung, "R3");
+  });
+
+  test("single-provider Claude respects per-model quota overrides across R0-R3", () => {
+    const live = {
+      claudeAgent: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
+    };
+    const scarceOpusQuota: QuotaFile = {
+      schema_version: 1,
+      updated_at: "2026-11-24T00:00:00Z",
+      providers: {
+        claudeAgent: {
+          state: "normal",
+          resets_at: null,
+          model_overrides: {
+            "claude-opus-5-5": {
+              state: "scarce",
+              reserve_for_min_rung: "R2",
+            },
+          },
+        },
+      },
+    };
+
+    const r0 = selectRoute(frontier, scarceOpusQuota, {
+      required_rung: "R0",
+      category: "research",
+      verifiability: "moderate",
+      blast_radius: "single_file",
+      live_models: live,
+    });
+    assert.equal(r0?.entry.model, "claude-haiku-5-5");
+
+    const r1 = selectRoute(frontier, scarceOpusQuota, {
+      required_rung: "R1",
+      category: "bugfix",
+      verifiability: "strict",
+      blast_radius: "isolated_module",
+      live_models: live,
+    });
+    assert.equal(r1?.entry.model, "claude-sonnet-5-5");
+
+    const r2 = selectRoute(frontier, scarceOpusQuota, {
+      required_rung: "R2",
+      category: "feature_slice",
+      verifiability: "moderate",
+      blast_radius: "multi_module",
+      live_models: live,
+    });
+    assert.equal(r2?.entry.model, "claude-opus-5-5");
+    assert.equal(r2?.quota_state, "scarce");
+  });
 });
