@@ -6,8 +6,8 @@
  * Overrides, quota and role tunables are applied at route time (scripts/route.ts), so editing
  * them never requires a resync.
  *
- * Sources (auto): official AA API v2 when ARTIFICIAL_ANALYSIS_API_KEY is set (Pro endpoint,
- * falling back to the free endpoint), else the zero-key daily mirror (intelligence index only).
+ * Sources (auto): AA API v2 free tier when ARTIFICIAL_ANALYSIS_API_KEY is set (adds coding and
+ * agentic indices and cache-hit prices), else the zero-key daily mirror (intelligence index only).
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -231,8 +231,7 @@ Options:
   --refresh               Force fetching fresh full AA snapshot into benchmarks.json
   --offline               Never hit the network; recompute from cached benchmarks.json only
   --source=mirror         Force zero-key daily Artificial Analysis mirror
-  --source=api            Force official AA API v2 (requires ARTIFICIAL_ANALYSIS_API_KEY;
-                          Pro endpoint first, free endpoint on 401/403)
+  --source=api            Force AA API v2 free tier (requires ARTIFICIAL_ANALYSIS_API_KEY)
   --dry-run               Print computed frontier without writing files
   --check-models a,b,c    Exit 2 if any model ID is uncalibrated in frontier.json (no network)
 `);
@@ -487,14 +486,9 @@ async function fetchApiPages(
 }
 
 async function fetchFromApi(apiKey: string): Promise<CachedBenchmarksFile> {
-  let tier: "pro" | "free" = "pro";
-  let url = AA_API_BASE;
-  let res = await fetchApiPages(url, apiKey);
-  if (!res.ok && (res.status === 401 || res.status === 403)) {
-    tier = "free";
-    url = `${AA_API_BASE}/free`;
-    res = await fetchApiPages(url, apiKey);
-  }
+  const tier = "free" as const;
+  const url = `${AA_API_BASE}/free`;
+  const res = await fetchApiPages(url, apiKey);
   if (!res.ok) throw new Error(`AA API request failed with HTTP ${res.status} (${url}).`);
   const models = res.items.map(normalizeAAApiModel).filter((m): m is AAModelRecord => m !== null);
   if (models.length === 0) throw new Error("AA API returned zero usable models.");

@@ -6,7 +6,7 @@ A relocatable skill for routing delegated agent tasks across providers, models a
 
 - **One call per delegation.** `scripts/route.ts` takes a task's category, capability floor (R0–R3), verifiability and blast radius and prints the chosen `(provider, model, options)`, harness hints, fallbacks and a telemetry template. The agent never reads the data files.
 - **Roles, not one index.** Categories map to roles (scout, implement, debug, design, review). Each role has its own quality composite over Artificial Analysis metrics, token profile, latency value and failure cost ([roles.json](./roles.json)).
-- **Comparable quality scale.** Every AA metric (coding/agentic indices, Terminal-Bench, LCR, IFBench, …) is quantile-mapped onto the intelligence-index scale, so floors stay in familiar index points whichever metrics are available.
+- **Comparable quality scale.** Every AA metric (intelligence, coding and agentic indices) is quantile-mapped onto the intelligence-index scale, so floors stay in familiar index points whichever metrics are available.
 - **Expected cost, not a weighted score.** Among live candidates that clear the floor:
   `E = $tokens × quota multiplier × cost_multiplier + $/min × wait + (1 − P(pass)) × failure cost`.
   `$tokens` uses the role's input/cache/output mix with AA's input, cache-hit and output prices, and output scaled by each model/effort's AA-measured verbosity. `P(pass)` is logistic in quality − floor.
@@ -19,9 +19,8 @@ A relocatable skill for routing delegated agent tasks across providers, models a
 |---|---|---|
 | Daily mirror (default, no key) | `sync-benchmarks.ts` | Intelligence index, prices, task cost, speed, TTFT |
 | AA API free tier | `ARTIFICIAL_ANALYSIS_API_KEY` set | + coding index, agentic index, cache-hit price |
-| AA API Pro tier | same key, Pro subscription | + per-eval scores (Terminal-Bench, AA-LCR, IFBench, SciCode, …), measured token counts |
 
-The sync tries the Pro endpoint first and falls back to the free endpoint on 401/403. Metrics reported by fewer than `min_metric_coverage` snapshot models are ignored.
+The AA Pro tier (per-eval scores) is deliberately not used. Metrics reported by fewer than `min_metric_coverage` snapshot models are ignored.
 
 ## Usage (any working directory)
 

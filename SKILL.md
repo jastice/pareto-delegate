@@ -63,4 +63,4 @@ After each delegated attempt, append the `outcome_template` as one JSON line to 
 - `overrides.json` / `overrides.local.json`: `exclude`, `max_floor`, `floor_constraints`, `quality_bias`, `cost_multiplier` per `provider:*`, `provider:model` or `provider:model:effort`. Applied at route time; no resync.
 - `quota.local.json`: `surplus` / `normal` / `scarce` (+ `reserve_for_min_rung`) / `throttled` (+ `resets_at`).
 - `bun run <skill-dir>/scripts/calibrate.ts`: learned `quality_bias` suggestions from `outcomes.jsonl`.
-- `ARTIFICIAL_ANALYSIS_API_KEY` + `sync-benchmarks.ts --refresh`: adds coding/agentic indices (free tier) or per-eval scores and measured token counts (Pro) to role quality.
+- `ARTIFICIAL_ANALYSIS_API_KEY` (free tier) + `sync-benchmarks.ts --refresh`: adds AA coding/agentic indices and cache-hit prices to role quality and cost.

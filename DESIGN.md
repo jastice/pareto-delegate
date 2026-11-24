@@ -41,10 +41,10 @@ Cross-provider installation: keep one canonical directory (or symlink from this 
 
 The v1 design assigned each `(model, effort)` to exactly one rung by intelligence-index band and ranked within a rung with a hand-weighted `index − k·log(cost)` score. That made entries ineligible below their band, kept the extremes of each provider's front (dropping the knee), priced every role with AA's output-heavy eval mix, and required the agent to execute the filter by reading the frontier. v2 replaces the bands with:
 
-1. **Role quality.** `roles.json` maps categories to roles. A role's quality is the weighted mean of the AA metrics it lists that exist in the snapshot. Each metric is first quantile-mapped onto the intelligence-index scale (equal percentile among snapshot models that report both), so mirror-only, free-tier and Pro data all yield quality in index points.
+1. **Role quality.** `roles.json` maps categories to roles. A role's quality is the weighted mean of the AA metrics it lists that exist in the snapshot. Each metric is first quantile-mapped onto the intelligence-index scale (equal percentile among snapshot models that report both), so mirror-only and free-tier data both yield quality in index points.
 2. **Floors.** `R0`–`R3` are minimum role quality (defaults 24/40/50/57, matching the v1 band edges). Any entry above a floor is eligible for it; floors are hard and quota never lowers them. Verifiability/blast radius shift the floor (strict + single file −1, subjective +1). Per-floor TTFT caps stop max-effort thinking loops.
 3. **Expected cost per attempt.**
-   - Token cost: `input × (1 − cache_share) × p_in + input × cache_share × p_cache + output × verbosity × p_out`, with the role's token profile and `verbosity = (AA-suite output tokens / snapshot median)^exponent` (measured on Pro, else `task_cost / p_out`).
+   - Token cost: `input × (1 − cache_share) × p_in + input × cache_share × p_cache + output × verbosity × p_out`, with the role's token profile and `verbosity = (AA-suite output tokens / snapshot median)^exponent` (measured when reported, else `task_cost / p_out`).
    - Effective cost: token cost × quota multiplier (surplus 0.1, normal 1, scarce 4) × override `cost_multiplier`.
    - Waiting: `$/min × (turns × TTFT × turn_latency_factor + output / tps)`, scaled down for `--background` tasks.
    - Failure: `(1 − P(pass)) × failure_cost[role][floor] × verifiability factor`, where `P(pass) = σ((q − floor)/s + logit(p_at_floor))`.
@@ -55,7 +55,7 @@ Known limitations:
 - **No exploration.** Calibration only learns about models that receive traffic. A model the router never picks keeps its AA-derived quality, however wrong.
 - **Token profiles and dollar values are priors**, not measurements. `failure_cost_usd` and `value_per_minute_usd` dominate many decisions; tune them first.
 - **Quantile mapping drifts slightly** as AA adds models with different metric profiles; the base index itself is identity-mapped and unaffected.
-- **AA per-eval scores need the Pro tier**; free tier contributes coding/agentic indices; the mirror only the intelligence index, in which case all roles share one quality signal and differ only in cost/latency/failure parameters.
+- **AA per-eval scores are Pro-only and intentionally unused.** The free tier contributes coding/agentic indices; the mirror only the intelligence index, in which case all roles share one quality signal and differ only in cost/latency/failure parameters.
 
 ## 1. Capability Floors & Provider Normalization
 

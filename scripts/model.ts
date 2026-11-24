@@ -3,8 +3,7 @@
  *
  * Quality: every AA metric is quantile-mapped onto the intelligence-index scale, so a role's
  * composite (weighted mean of whatever metrics exist) is in familiar "index points" no matter
- * whether the data came from the mirror (index only), the free API (+coding/agentic indices)
- * or the Pro API (+per-eval scores).
+ * whether the data came from the mirror (index only) or the AA free API (+coding/agentic indices).
  *
  * Cost of one attempt:
  *   E = quota_mult * cost_multiplier * $tokens + value_per_minute * minutes + (1 - P(pass)) * failure_cost
@@ -47,7 +46,7 @@ function interpolate(sorted: readonly number[], pos: number): number {
 
 /**
  * Build a mapper metric-value -> intelligence-index-equivalent using models that report both.
- * Equal-percentile mapping: a model at the 80th percentile on terminalbench_hard maps to the
+ * Equal-percentile mapping: a model at the 80th percentile on the coding index maps to the
  * index value at the 80th percentile. Robust to scale (0–1 vs 0–100) and AA re-normalizations.
  */
 export function buildQuantileMapper(
@@ -90,7 +89,7 @@ export function collectMetricNames(records: readonly AAModelRecord[]): readonly 
   return [...names].sort();
 }
 
-/** AA-suite output tokens: measured when the Pro tier provides counts, else cost / output price. */
+/** AA-suite output tokens: measured when the source reports counts, else cost / output price. */
 export function aaOutputTokens(record: AAModelRecord): { tokens: number; measured: boolean } {
   const t = record.tokens;
   const measured =

@@ -82,7 +82,7 @@ export interface AAModelRecord {
   readonly ttft: number;
   /** Raw AA evaluation scores keyed by AA field name (indices 0–100, per-eval scores usually 0–1). */
   readonly evals?: Readonly<Record<string, number>>;
-  /** Pro tier only: tokens used to run the Intelligence Index. */
+  /** Tokens used to run the Intelligence Index, when a source reports them. */
   readonly tokens?: AATokenCounts;
   readonly url?: string;
 }
@@ -129,7 +129,7 @@ export interface FrontierEntry {
     readonly task: number;
     readonly tps: number;
     readonly ttft: number;
-    /** Output tokens used on the AA suite (measured on Pro tier, else estimated from cost). */
+    /** Output tokens used on the AA suite (measured when reported, else estimated from cost). */
     readonly output_tokens: number;
     readonly output_tokens_measured: boolean;
   };
