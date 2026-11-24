@@ -77,13 +77,18 @@ Parameters worth revisiting first, in order of leverage: `failure_cost_usd` per 
 
 ## Installation
 
-- **Antigravity (T3 Code or standalone):**
-  ```bash
-  mkdir -p ~/.t3/userdata/providers/antigravity/<profile-hash>/config/skills
-  ln -s /path/to/pareto-delegate ~/.t3/userdata/providers/antigravity/<profile-hash>/config/skills/pareto-delegate
-  ln -s /path/to/pareto-delegate ~/.gemini/config/skills/pareto-delegate   # standalone
-  ```
-- **Claude / Cursor / Codex:** symlink into `~/.claude/skills/pareto-delegate`, `~/.cursor/skills/pareto-delegate` and/or `~/.codex/skills/pareto-delegate`.
+```bash
+git clone https://github.com/jastice/pareto-delegate ~/workspace/pareto-delegate
+~/workspace/pareto-delegate/scripts/install.sh            # --dry-run to preview, --uninstall to remove
+```
+
+The script symlinks the checkout into every skill directory it finds:
+
+- **Claude Code:** `<config dir>/skills/` for `~/.claude` and every other profile: `~/.claude-*`, `~/.config/claude*`, `$CLAUDE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR=...` in shell rc files, `~/.agy-profiles/*/home/.claude`. A directory counts as a profile if it has `settings.json`, `.claude.json`, `.credentials.json` or `projects/`.
+- **Codex:** `~/.agents/skills/` (current user-level location). `~/.codex/skills/` is deliberately not linked too, since Codex lists same-named skills twice.
+- **Antigravity:** `~/.gemini/config/skills/` (app/IDE) and `~/.gemini/antigravity-cli/skills/` (CLI), in `~` and in each `~/.agy-profiles/*/home`.
+
+Existing symlinks are replaced; real directories of the same name are left alone. T3 Code children use these same user-level directories.
 
 ## Development & evals
 
